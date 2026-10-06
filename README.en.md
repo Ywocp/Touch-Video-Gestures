@@ -10,7 +10,7 @@ On a phone, tablet, or emulator, the browser's native video control bar is tiny 
 
 | Gesture | Action |
 |---|---|
-| Horizontal swipe | Seek through the video (percentage of total duration, non-linear curve) |
+| Horizontal swipe | Seek through the video (percentage of total duration, non-linear curve; previews while dragging, applies on release) |
 | Double-tap left / right area | Rewind / fast-forward (step adjustable, 10s by default) |
 | Vertical swipe in the center area | Toggle fullscreen (swipe down to enter, up to exit by default; direction reversible) |
 | Vertical swipe while fullscreen | Left side adjusts brightness / right side adjusts volume |
