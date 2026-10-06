@@ -2,7 +2,7 @@
 
 Last updated: October 6, 2026
 
-This policy applies to **Touch Video Gestures: Touch Gestures for Video**（触控视频手势）.
+This policy applies to **Touch Video Gestures: Touch Gestures for Video**（触控视频手势）, a browser extension for **Microsoft Edge** (and other Chromium-based browsers).
 
 1. Touch Video Gestures: Touch Gestures for Video does not collect any personal information.
 
@@ -18,11 +18,17 @@ This policy applies to **Touch Video Gestures: Touch Gestures for Video**（触�
 
 7. The use of information received from Google APIs will adhere to the [Chrome Web Store User Data Policy](https://developer.chrome.com/docs/webstore/program-policies/limited-use), including the Limited Use requirements.
 
+8. **Your control over your data.** You can view, change, reset or delete all data the extension holds at any time. Open the extension's settings panel (by clicking the extension icon in the browser toolbar) to see and edit every stored value, or use its reset option to return everything to defaults. Uninstalling the extension from Microsoft Edge (`edge://extensions`) removes all stored settings immediately. Because the extension collects no data on any server, there is nothing retained elsewhere and no request process is needed.
+
+9. **Compliance.** This policy is maintained in accordance with applicable data-protection laws and regulations, and is updated whenever the extension's functionality or data practices change. This policy is specific to this extension; it is not the Microsoft privacy statement and does not describe Microsoft's practices.
+
 ---
 
 ## 中文版
 
 最后更新：2026 年 10 月 6 日
+
+本政策适用于 **Touch Video Gestures：触控视频手势**，一款面向 **Microsoft Edge**（以及其他 Chromium 内核浏览器）的浏览器扩展。
 
 1. Touch Video Gestures：触控视频手势不收集任何个人信息。
 
@@ -37,6 +43,10 @@ This policy applies to **Touch Video Gestures: Touch Gestures for Video**（触�
 6. 本扩展的全部代码均包含在已发布的安装包内，不加载、不执行远程代码，亦不使用 `eval()` 或 `new Function()`。
 
 7. 本扩展对自 Google API 获取的信息的使用，将遵守 [Chrome 网上应用店用户数据政策](https://developer.chrome.com/docs/webstore/program-policies/limited-use)，包括其中的有限使用（Limited Use）要求。
+
+8. **你对数据的控制权。** 本扩展保存的所有数据，你都可以随时查看、修改、重置或删除。点击浏览器工具栏上的扩展图标打开设置面板，即可查看并编辑每一项已保存的值，也可使用重置功能恢复默认。从 Microsoft Edge 中卸载本扩展（`edge://extensions`）会立即清除全部已保存设置。由于本扩展不向任何服务器收集数据，不存在其他留存的副本，也无需走任何申请流程。
+
+9. **合规性。** 本政策依据适用的数据保护法律法规维护，并在扩展功能或数据处理方式发生变化时随之更新。本政策仅针对本扩展，不是 Microsoft 隐私声明，也不描述 Microsoft 的实践。
 
 ---
 
