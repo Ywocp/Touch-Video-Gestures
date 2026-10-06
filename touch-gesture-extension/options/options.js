@@ -348,34 +348,28 @@ function setSiteEnabled(on) {
   });
 }
 
-// 记住当前站点，供"完整设置页"读取。
-// 用 session 存储：关浏览器即清，不落盘、不联网（与隐私政策一致）。
-function rememberHost(h) {
-  try {
-    if (h && typeof chrome !== 'undefined' && chrome.storage && chrome.storage.session) {
-      chrome.storage.session.set({ tvgHost: h });
-    }
-  } catch (e) {}
-}
-
+// 识别"当前网站"。
+// 有了 tabs 权限后，可以直接读取本窗口所有标签的 URL，因此 popup 与完整设置页
+// 走同一条逻辑，不再需要靠 session 存储或 URL 参数在两者之间传递：
+//   - popup：活动标签就是用户正在浏览的网站，直接命中。
+//   - 完整设置页：活动标签是设置页自身，于是退一步取"本窗口最近访问的普通网页"。
+// 只用于在面板上显示域名，不记录、不上报。
 function detectSiteHost() {
-  // 1) popup 打开完整设置页时会带上 ?host=
-  var q = null;
-  try { q = new URL(location.href).searchParams.get('host'); } catch (e) {}
-  if (q) { siteHost = q; paintSite(); return; }
-
   if (typeof chrome === 'undefined' || !chrome.tabs || !chrome.tabs.query) { paintSite(); return; }
-  // 2) popup 场景：activeTab 授权期内可读到当前标签的 url
-  chrome.tabs.query({ active: true, currentWindow: true }, function (tabs) {
-    var h = hostOf(tabs && tabs[0] && tabs[0].url);
-    if (h) { siteHost = h; rememberHost(h); paintSite(); return; }
-    // 3) 完整设置页场景：当前标签就是设置页本身，读 popup 留下的站点
-    if (chrome.storage && chrome.storage.session) {
-      chrome.storage.session.get('tvgHost', function (o) {
-        siteHost = (o && o.tvgHost) || null;
-        paintSite();
-      });
-    } else paintSite();
+  chrome.tabs.query({ currentWindow: true }, function (tabs) {
+    var list = (tabs || []).filter(function (t) { return !!hostOf(t.url); });
+    if (!list.length) { siteHost = null; paintSite(); return; }
+
+    var active = null;
+    list.forEach(function (t) { if (t.active) active = t; });
+    if (active) { siteHost = hostOf(active.url); paintSite(); return; }
+
+    var best = list[0];
+    list.forEach(function (t) {
+      if ((t.lastAccessed || 0) > (best.lastAccessed || 0)) best = t;
+    });
+    siteHost = hostOf(best.url);
+    paintSite();
   });
 }
 
@@ -442,14 +436,12 @@ if (copyBtn) {
   });
 }
 
-// popup 里的"打开完整设置页"：带上当前域名，让设置页也能显示本网站开关
+// popup 里的"打开完整设置页"
 var openBtn = document.getElementById('openOptions');
 if (openBtn) {
   openBtn.addEventListener('click', function () {
-    if (typeof chrome === 'undefined' || !chrome.runtime) return;
-    var url = chrome.runtime.getURL('options/options.html') + (siteHost ? '?host=' + encodeURIComponent(siteHost) : '');
-    if (chrome.tabs && chrome.tabs.create) chrome.tabs.create({ url: url });
-    else if (chrome.runtime.openOptionsPage) chrome.runtime.openOptionsPage();
+    if (typeof chrome === 'undefined' || !chrome.runtime || !chrome.runtime.openOptionsPage) return;
+    chrome.runtime.openOptionsPage();
     window.close();
   });
 }
@@ -465,9 +457,9 @@ if (diag && typeof chrome !== 'undefined' && chrome.tabs && chrome.tabs.query) {
   chrome.tabs.query({ active: true, currentWindow: true }, function (tabs) {
     var tab = tabs && tabs[0];
     if (!tab || !tab.id) { paintSite(); return; }
-    // 从 URL 里取域名（activeTab 权限）
+    // 有 tabs 权限，可直接从 URL 取域名
     var fromUrl = hostOf(tab.url);
-    if (fromUrl) { siteHost = fromUrl; rememberHost(fromUrl); }
+    if (fromUrl) siteHost = fromUrl;
 
     function statFrame(frameId, cb) {
       chrome.tabs.sendMessage(tab.id, { type: 'tvg:stats' }, { frameId: frameId }, function (res) {
@@ -498,7 +490,7 @@ if (diag && typeof chrome !== 'undefined' && chrome.tabs && chrome.tabs.query) {
         deep += r.deepVideos || 0;
         if (r.host) host = r.host;
       });
-      if (host) { siteHost = host; rememberHost(host); }
+      if (host) siteHost = host;
       paintSite();
 
       if (taken > 0) {
