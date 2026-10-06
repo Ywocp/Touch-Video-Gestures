@@ -38,7 +38,9 @@
       "20": "icons/icon20.png",
       "24": "icons/icon24.png",
       "32": "icons/icon32.png",
-      "48": "icons/icon48.png"
+      "40": "icons/icon40.png",
+      "48": "icons/icon48.png",
+      "64": "icons/icon64.png"
     }
   },
   "options_ui": {
@@ -50,7 +52,9 @@
     "20": "icons/icon20.png",
     "24": "icons/icon24.png",
     "32": "icons/icon32.png",
+    "40": "icons/icon40.png",
     "48": "icons/icon48.png",
+    "64": "icons/icon64.png",
     "128": "icons/icon128.png"
   }
 }
