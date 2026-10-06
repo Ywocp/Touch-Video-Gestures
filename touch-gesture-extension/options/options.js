@@ -3,25 +3,31 @@
 // ===== 默认值（与 content/tvg-core.js 保持一致）=====
 var DEFAULTS = {
   enabled: true,
-  progress: true, seekMaxPercent: 50, seekCurve: 1.7, seekRealtime: false,
+  progress: true, seekMaxPercent: 25, seekCurve: 3, seekRealtime: false,
   volume: true, brightness: true, volGain: 1.2, brightGain: 1.2,
-  fsGesture: true, fsReverse: false, fsEdgePercent: 34, fsThreshold: 40, blockDblFs: false,
-  speed: true, speedStep: 0.25, instant4x: true, longPress4x: false, longPressMs: 500, longPressRate: 4,
+  fsGesture: true, fsReverse: false, fsEdgePercent: 20, fsThreshold: 40, blockDblFs: false,
+  speed: true, speedStep: 0.25, instant4x: true, longPress4x: true, longPressMs: 500, longPressRate: 2,
   doubleTapSeek: true, seekStep: 10, doubleTapMs: 300,
   moveThreshold: 12,
   orientationLock: true, mouseSupport: true,
-  toastY: 50, toastFont: 14, toastOpacity: 86, toastMs: 900, hintOnAttach: true,
+  toastY: 10, toastFont: 8, toastOpacity: 70, toastMs: 900, hintOnAttach: true,
   disabledSites: []
 };
 
 var PRESETS = {
-  mild:       { seekMaxPercent: 35, seekCurve: 2.0, volGain: 1.0, brightGain: 1.0, moveThreshold: 14, toastMs: 900 },
-  standard:   { seekMaxPercent: 50, seekCurve: 1.7, volGain: 1.2, brightGain: 1.2, moveThreshold: 12, toastMs: 900 },
-  aggressive: { seekMaxPercent: 70, seekCurve: 1.4, volGain: 1.6, brightGain: 1.6, moveThreshold: 10, toastMs: 1200 }
+  mild:       { seekMaxPercent: 15, seekCurve: 4.5, volGain: 1.0, brightGain: 1.0, moveThreshold: 14, toastMs: 900 },
+  standard:   { seekMaxPercent: 25, seekCurve: 3.0, volGain: 1.2, brightGain: 1.2, moveThreshold: 12, toastMs: 900 },
+  aggressive: { seekMaxPercent: 40, seekCurve: 2.0, volGain: 1.6, brightGain: 1.6, moveThreshold: 10, toastMs: 1200 }
 };
 
 // ===== 面板结构 =====
 var SECTIONS = [
+  {
+    title: '当前网站',
+    fields: [
+      { type: 'site' }
+    ]
+  },
   {
     title: '通用',
     fields: [
@@ -33,7 +39,7 @@ var SECTIONS = [
     fields: [
       { key: 'progress', type: 'bool', label: '启用进度手势' },
       { key: 'seekMaxPercent', type: 'range', min: 5, max: 100, step: 5, unit: '%', label: '进度强度', hint: '滑满半屏宽跳转的最大百分比' },
-      { key: 'seekCurve', type: 'range', min: 1, max: 3, step: 0.05, label: '曲线指数', hint: '数值越大越平缓，小幅滑动更精准' },
+      { key: 'seekCurve', type: 'range', min: 1, max: 6, step: 0.05, label: '曲线指数', hint: '数值越大越平缓，小幅滑动更精准（可到 6）' },
       { key: 'seekRealtime', type: 'bool', label: '拖动时实时跳转', hint: '关闭（默认）＝拖动时只预览目标时间，松手才真正跳转，避免网络视频反复缓冲卡顿；开启＝拖动过程中画面实时跟随' },
       { type: 'curve' }
     ]
@@ -99,6 +105,8 @@ var SECTIONS = [
 
 var cfg = Object.assign({}, DEFAULTS);
 var els = {};
+var siteHost = null;   // 当前站点域名（未识别到网页时为 null）
+var siteCb = null;     // 顶部"在本网站启用手势"开关元素
 
 // 存储适配：扩展环境用 chrome.storage，普通浏览器打开时退化为 localStorage（便于预览）
 var store = (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.sync) ? {
@@ -133,6 +141,30 @@ function build() {
 }
 
 function buildRow(f) {
+  // 当前网站开关：不是普通配置项，状态取决于 disabledSites 是否含当前域名
+  if (f.type === 'site') {
+    var srow = document.createElement('div');
+    srow.className = 'row';
+    var sinfo = document.createElement('div');
+    sinfo.className = 'info';
+    var sname = document.createElement('span');
+    sname.className = 'name';
+    sname.textContent = '在本网站启用手势';
+    var shost = document.createElement('span');
+    shost.className = 'hint';
+    shost.id = 'siteHostName';
+    shost.textContent = '正在识别…';
+    sinfo.appendChild(sname);
+    sinfo.appendChild(shost);
+    srow.appendChild(sinfo);
+    var scb = document.createElement('input');
+    scb.type = 'checkbox';
+    scb.addEventListener('change', function () { setSiteEnabled(scb.checked); });
+    siteCb = scb;
+    srow.appendChild(scb);
+    return srow;
+  }
+
   if (f.type === 'sites') {
     var wrap = document.createElement('div');
     wrap.className = 'row';
@@ -148,6 +180,7 @@ function buildRow(f) {
       set('disabledSites', ta.value.split(/\n+/)
         .map(function (s) { return s.trim().replace(/^https?:\/\//, '').replace(/\/.*$/, ''); })
         .filter(Boolean));
+      paintSite();   // 手动改列表后，顶部开关要跟着变
     });
     els.disabledSites = ta;
     wrap.appendChild(info);
@@ -276,6 +309,76 @@ function paintToggle(btn) {
   btn.classList.toggle('rev', !!cfg.fsReverse);
 }
 
+// ===== 当前网站开关 =====
+function hostOf(url) {
+  try { return /^https?:/.test(url) ? new URL(url).hostname : null; } catch (e) { return null; }
+}
+
+function isSiteEnabled() {
+  if (!siteHost) return true;
+  return (cfg.disabledSites || []).indexOf(siteHost) < 0;
+}
+
+function paintSite() {
+  if (!siteCb) return;
+  var known = !!siteHost;
+  siteCb.disabled = !known;
+  siteCb.checked = known ? isSiteEnabled() : true;
+  var el = document.getElementById('siteHostName');
+  if (el) el.textContent = known ? siteHost : '未识别到网页，请从工具栏图标打开本页';
+}
+
+function setSiteEnabled(on) {
+  if (!siteHost) { paintSite(); return; }
+  var list = (cfg.disabledSites || []).slice();
+  var i = list.indexOf(siteHost);
+  if (on && i >= 0) list.splice(i, 1);
+  else if (!on && i < 0) list.push(siteHost);
+  else { paintSite(); return; }
+  cfg.disabledSites = list;
+  if (els.disabledSites) els.disabledSites.value = list.join('\n');
+  store.set({ cfg: cfg }).then(function () {
+    paintSite();
+    var tip = document.getElementById('tip');
+    if (tip) {
+      tip.textContent = (on ? '已在本网站启用' : '已在本网站禁用') + ' · 刷新页面生效';
+      flashTip();
+      setTimeout(function () { tip.textContent = '已保存'; }, 1800);
+    }
+  });
+}
+
+// 记住当前站点，供"完整设置页"读取。
+// 用 session 存储：关浏览器即清，不落盘、不联网（与隐私政策一致）。
+function rememberHost(h) {
+  try {
+    if (h && typeof chrome !== 'undefined' && chrome.storage && chrome.storage.session) {
+      chrome.storage.session.set({ tvgHost: h });
+    }
+  } catch (e) {}
+}
+
+function detectSiteHost() {
+  // 1) popup 打开完整设置页时会带上 ?host=
+  var q = null;
+  try { q = new URL(location.href).searchParams.get('host'); } catch (e) {}
+  if (q) { siteHost = q; paintSite(); return; }
+
+  if (typeof chrome === 'undefined' || !chrome.tabs || !chrome.tabs.query) { paintSite(); return; }
+  // 2) popup 场景：activeTab 授权期内可读到当前标签的 url
+  chrome.tabs.query({ active: true, currentWindow: true }, function (tabs) {
+    var h = hostOf(tabs && tabs[0] && tabs[0].url);
+    if (h) { siteHost = h; rememberHost(h); paintSite(); return; }
+    // 3) 完整设置页场景：当前标签就是设置页本身，读 popup 留下的站点
+    if (chrome.storage && chrome.storage.session) {
+      chrome.storage.session.get('tvgHost', function (o) {
+        siteHost = (o && o.tvgHost) || null;
+        paintSite();
+      });
+    } else paintSite();
+  });
+}
+
 // ===== 状态同步 =====
 function refresh() {
   Object.keys(els).forEach(function (k) {
@@ -290,6 +393,7 @@ function refresh() {
     if (e.type === 'checkbox') e.checked = !!cfg[k];
     else e.value = cfg[k];
   });
+  paintSite();
   updateCurve();
 }
 
@@ -338,66 +442,32 @@ if (copyBtn) {
   });
 }
 
-// popup 里的"打开完整设置页"
+// popup 里的"打开完整设置页"：带上当前域名，让设置页也能显示本网站开关
 var openBtn = document.getElementById('openOptions');
 if (openBtn) {
   openBtn.addEventListener('click', function () {
-    if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.openOptionsPage) {
-      chrome.runtime.openOptionsPage();
-      window.close();
-    }
+    if (typeof chrome === 'undefined' || !chrome.runtime) return;
+    var url = chrome.runtime.getURL('options/options.html') + (siteHost ? '?host=' + encodeURIComponent(siteHost) : '');
+    if (chrome.tabs && chrome.tabs.create) chrome.tabs.create({ url: url });
+    else if (chrome.runtime.openOptionsPage) chrome.runtime.openOptionsPage();
+    window.close();
   });
 }
 
-// 诊断 + 一键禁用当前网站（popup 用）
+// 诊断（popup 用）
 var diag = document.getElementById('diagNote');
-var siteBtn = document.getElementById('toggleSite');
-var currentHost = null;
 
 function version() {
   try { return chrome.runtime.getManifest().version; } catch (e) { return '?'; }
 }
 
-function refreshSiteBtn() {
-  if (!siteBtn) return;
-  if (!currentHost) {
-    siteBtn.disabled = true;
-    siteBtn.textContent = '当前网站不可用';
-    return;
-  }
-  var off = (cfg.disabledSites || []).indexOf(currentHost) >= 0;
-  siteBtn.disabled = false;
-  siteBtn.textContent = off ? '已禁用本网站 · 点此恢复' : '在本网站禁用手势';
-}
-
-function toggleSite() {
-  if (!currentHost) return;
-  var list = (cfg.disabledSites || []).slice();
-  var i = list.indexOf(currentHost);
-  if (i >= 0) list.splice(i, 1);
-  else list.push(currentHost);
-  cfg.disabledSites = list;
-  store.set({ cfg: cfg }).then(function () {
-    refreshSiteBtn();
-    var tip = document.getElementById('tip');
-    if (tip) {
-      tip.textContent = i >= 0 ? '已恢复，刷新页面生效' : '已禁用，刷新页面生效';
-      flashTip();
-      setTimeout(function () { tip.textContent = '已保存'; }, 1800);
-    }
-  });
-}
-
-if (siteBtn) siteBtn.addEventListener('click', toggleSite);
-
 if (diag && typeof chrome !== 'undefined' && chrome.tabs && chrome.tabs.query) {
   chrome.tabs.query({ active: true, currentWindow: true }, function (tabs) {
     var tab = tabs && tabs[0];
-    if (!tab || !tab.id) { refreshSiteBtn(); return; }
+    if (!tab || !tab.id) { paintSite(); return; }
     // 从 URL 里取域名（activeTab 权限）
-    try {
-      if (tab.url && /^https?:/.test(tab.url)) currentHost = new URL(tab.url).hostname;
-    } catch (e) {}
+    var fromUrl = hostOf(tab.url);
+    if (fromUrl) { siteHost = fromUrl; rememberHost(fromUrl); }
 
     function statFrame(frameId, cb) {
       chrome.tabs.sendMessage(tab.id, { type: 'tvg:stats' }, { frameId: frameId }, function (res) {
@@ -428,8 +498,8 @@ if (diag && typeof chrome !== 'undefined' && chrome.tabs && chrome.tabs.query) {
         deep += r.deepVideos || 0;
         if (r.host) host = r.host;
       });
-      if (host) currentHost = host;
-      refreshSiteBtn();
+      if (host) { siteHost = host; rememberHost(host); }
+      paintSite();
 
       if (taken > 0) {
         diag.textContent = '已接管 ' + taken + ' 个视频（共 ' + frames.length + ' 帧）· v' + version();
@@ -491,8 +561,8 @@ if (diag && typeof chrome !== 'undefined' && chrome.tabs && chrome.tabs.query) {
 
 // ===== 启动 =====
 build();
+detectSiteHost();
 store.get('cfg').then(function (o) {
   cfg = Object.assign({}, DEFAULTS, (o && o.cfg) || {});
   refresh();
-  refreshSiteBtn();
 });

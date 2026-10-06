@@ -14,7 +14,7 @@ On a phone, tablet, or emulator, the browser's native video control bar is tiny 
 | Double-tap left / right area | Rewind / fast-forward (step adjustable, 10s by default) |
 | Vertical swipe in the center area | Toggle fullscreen (swipe down to enter, up to exit by default; direction reversible) |
 | Vertical swipe while fullscreen | Left side adjusts brightness / right side adjusts volume |
-| Long press | Play at increased speed (4x by default, restores on release) |
+| Long press | Play at increased speed (2x by default, restores on release) |
 | Two-finger horizontal swipe | Fine-tune playback speed (0.25x – 4x) |
 
 - **Universal**: not tied to any specific site. Tuned for common video sites and iframe-embedded players, including canvas-rendered players.
