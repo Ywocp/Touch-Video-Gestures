@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <link rel="stylesheet" href="../options/shared.css">
+</head>
+<body class="popup-mode">
+  <header>
+    <h1>手势设置</h1>
+    <div class="sub">改动即时生效</div>
+    <div class="presets">
+      <button data-preset="mild">轻度</button>
+      <button data-preset="standard">标准</button>
+      <button data-preset="aggressive">激进</button>
+      <button data-preset="reset">默认</button>
+    </div>
+  </header>
+
+  <div id="form"></div>
+
+  <div class="site-row">
+    <button class="ghost" id="toggleSite" disabled>检测当前网站…</button>
+  </div>
+
+  <footer>
+    <button class="ghost" id="openOptions">打开完整设置页</button>
+    <span id="diagNote" class="note"></span>
+    <span id="tip">已保存</span>
+  </footer>
+
+  <script src="../options/options.js"></script>
+</body>
+</html>

@@ -1,0 +1,55 @@
+{
+  "manifest_version": 3,
+  "name": "Touch Video Gestures：触控视频手势",
+  "version": "1.0.0",
+  "description": "触摸屏视频手势：左右滑调进度、双指调音量/亮度/倍速、双击快进快退。通用适配任意视频站点（含 iframe 嵌入播放器），修复原油猴脚本的同页多视频、滚动误触、页面锁死问题。点扩展图标即可调参数。",
+  "permissions": [
+    "storage",
+    "activeTab",
+    "webNavigation"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "content/tvg-core.js",
+        "content/tvg-storage.js",
+        "content/tvg-ui.js",
+        "content/tvg-locator.js",
+        "content/tvg-gesture.js",
+        "content/tvg-main.js"
+      ],
+      "css": [
+        "content/content.css"
+      ],
+      "all_frames": true,
+      "match_about_blank": true,
+      "match_origin_as_fallback": true
+    }
+  ],
+  "action": {
+    "default_title": "Touch Video Gestures：触控视频手势",
+    "default_popup": "popup/popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "20": "icons/icon20.png",
+      "24": "icons/icon24.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png"
+    }
+  },
+  "options_ui": {
+    "page": "options/options.html",
+    "open_in_tab": true
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "20": "icons/icon20.png",
+    "24": "icons/icon24.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}

@@ -1,0 +1,170 @@
+/* Touch Video Gestures：触控视频手势 - 设置面板共享样式（options 页与 popup 共用） */
+:root { color-scheme: dark; }
+* { box-sizing: border-box; }
+
+body {
+  font-family: system-ui, -apple-system, sans-serif;
+  background: #16181d;
+  color: #e8eaf0;
+  line-height: 1.6;
+  font-size: 14px;
+  margin: 0;
+}
+
+/* 完整设置页布局 */
+body.page-mode {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 28px 20px 90px;
+}
+
+/* 工具栏 popup 布局 */
+body.popup-mode {
+  width: 392px;
+  max-height: 598px;
+  overflow-y: auto;
+  padding: 14px 14px 16px;
+}
+
+/* Android 等平台把 popup 当整页渲染时：全宽居中，避免左对齐 */
+@media (max-width: 560px) {
+  body.popup-mode {
+    width: 100%;
+    max-width: 560px;
+    margin: 0 auto;
+  }
+}
+
+header { margin-bottom: 16px; }
+h1 { font-size: 19px; font-weight: 500; margin: 0 0 4px; }
+body.popup-mode h1 { font-size: 16px; }
+.sub { color: #9aa0aa; font-size: 13px; }
+body.popup-mode .sub { font-size: 12px; }
+
+.presets { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+.presets button {
+  background: #24262c;
+  border: 1px solid #3a3d46;
+  color: #cfd5df;
+  border-radius: 8px;
+  padding: 6px 12px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.presets button:hover { border-color: #378add; color: #fff; }
+
+section {
+  background: #1d1f25;
+  border: 1px solid #2e313a;
+  border-radius: 14px;
+  padding: 12px 16px;
+  margin-bottom: 12px;
+}
+body.popup-mode section { padding: 10px 12px; }
+
+h2 {
+  font-size: 13px;
+  font-weight: 500;
+  margin: 0 0 8px;
+  color: #8f97a6;
+  letter-spacing: .3px;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 7px 0;
+  border-bottom: 1px solid #24262c;
+}
+.row:last-child { border-bottom: none; }
+.row .info { flex: 1; min-width: 0; }
+.row .name { display: block; font-size: 13.5px; }
+.row .hint { display: block; color: #7f8794; font-size: 12px; line-height: 1.45; }
+
+input[type="range"] { width: 150px; accent-color: #378add; flex: none; }
+body.popup-mode input[type="range"] { width: 110px; }
+input[type="number"] { width: 84px; }
+input[type="checkbox"] { width: 18px; height: 18px; accent-color: #378add; flex: none; }
+input[type="number"], select, textarea {
+  background: #16181d;
+  border: 1px solid #3a3d46;
+  color: #e8eaf0;
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 13.5px;
+  font-family: inherit;
+}
+textarea { width: 100%; min-height: 80px; resize: vertical; }
+.val {
+  width: 52px;
+  text-align: right;
+  color: #9aa0aa;
+  font-variant-numeric: tabular-nums;
+  flex: none;
+  font-size: 13px;
+}
+
+/* popup 里的一键禁用当前网站 */
+.site-row {
+  margin: 4px 0 10px;
+  text-align: center;
+}
+.site-row button { width: 100%; }
+
+.curve-wrap { padding: 4px 0 2px; }
+.curve-wrap svg { display: block; width: 100%; height: auto; }
+
+/* 方向切换按钮（全屏手势方向） */
+.toggle-btn {
+  flex: none;
+  background: #1f2129;
+  color: #cdd2da;
+  border: 1px solid #343845;
+  border-radius: var(--border-radius-md, 8px);
+  padding: 6px 12px;
+  font-size: 12.5px;
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: border-color .15s, color .15s;
+}
+.toggle-btn:hover { border-color: #378add; color: #fff; }
+.toggle-btn.rev { border-color: #6fbf7a; color: #9fe1b3; }
+
+footer {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: center;
+}
+body.page-mode footer {
+  position: fixed;
+  left: 0; right: 0; bottom: 0;
+  background: rgba(22, 24, 29, .96);
+  border-top: 1px solid #2e313a;
+  padding: 12px 20px;
+}
+footer .note { color: #7f8794; font-size: 12.5px; }
+body.popup-mode footer { flex-direction: column; gap: 6px; }
+footer .ghost {
+  background: transparent;
+  color: #9aa0aa;
+  border: 1px solid #3a3d46;
+  border-radius: 8px;
+  padding: 7px 14px;
+  font-size: 13px;
+  cursor: pointer;
+}
+footer .ghost:hover { color: #fff; border-color: #5a5f6b; }
+#tip { color: #6fbf7a; font-size: 13px; opacity: 0; transition: opacity .2s; }
+#tip.show { opacity: 1; }
+
+/* 诊断信息：多行左对齐显示 */
+#diagNote {
+  white-space: pre-line;
+  text-align: left;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #9aa0aa;
+}

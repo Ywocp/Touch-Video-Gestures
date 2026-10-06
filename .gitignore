@@ -1,0 +1,33 @@
+# 构建产物与打包输出（安装包通过 Releases 分发，不入库）
+dist/
+*.crx
+*.pem
+touch-gesture-extension-v*.zip
+
+# 商店上架材料（仅本地使用，不属于开源项目内容）
+store/
+
+# 本地测试页
+testpage/
+
+# 本地辅助脚本
+push-to-github.sh
+
+# 图标设计过程产物（保留最终 icons/ 即可）
+天蓝单色图标/
+小尺寸锐化/
+简化版优化/
+配色讨论/
+触摸手势图标logo.miora
+触摸手势图标logo_assets/
+*.miora
+
+# WorkBuddy 工作目录
+.workbuddy/
+.wbapp_*.genie
+
+# 编辑器与系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

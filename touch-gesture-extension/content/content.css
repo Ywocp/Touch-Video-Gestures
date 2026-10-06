@@ -1,0 +1,45 @@
+/* Touch Video Gestures：触控视频手势 - 注入样式 */
+
+/* 容器：允许纵向原生滚动（页面滑动不受阻），
+   横向平移交给脚本手势；触点落在控件上时由 JS 守卫放行 */
+[data-tvg-container] {
+  touch-action: pan-y;
+}
+
+/* 全屏时纵向滚动无意义，且 pan-y 会被浏览器用来抢走音量/亮度手势的前几帧；
+   全屏期间由 JS 切换 .tvg-fs 类关闭 pan-y */
+[data-tvg-container].tvg-fs {
+  touch-action: none;
+}
+
+/* 非全屏时，触点在中间"全屏切换带"起手：临时锁住 pan-y，
+   保证纵向滑动前几帧不被浏览器当作页面滚动抢走（松手即移除该类） */
+[data-tvg-container].tvg-grab {
+  touch-action: none;
+}
+
+/* Toast 提示框：位置/字号由 JS 内联样式控制（锚定视频矩形） */
+.tvg-toast {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 2147483647;
+  background: rgba(20, 20, 24, 0.86);
+  color: #fff;
+  padding: 8px 16px;
+  border-radius: 10px;
+  font-size: 14px;
+  line-height: 1.5;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.18s ease;
+  text-align: center;
+  max-width: 80vw;
+  font-family: system-ui, -apple-system, sans-serif;
+  white-space: nowrap;
+}
+
+.tvg-toast.tvg-show {
+  opacity: 1;
+}
