@@ -1,8 +1,9 @@
 {
   "manifest_version": 3,
-  "name": "Touch Video Gestures：触控视频手势",
+  "name": "__MSG_extensionName__",
   "version": "1.0.0",
-  "description": "触摸屏视频手势：左右滑调进度、双指调音量/亮度/倍速、双击快进快退。通用适配任意视频站点（含 iframe 嵌入播放器），修复原油猴脚本的同页多视频、滚动误触、页面锁死问题。点扩展图标即可调参数。",
+  "default_locale": "zh_CN",
+  "description": "__MSG_extensionDescription__",
   "permissions": [
     "storage",
     "activeTab",
