@@ -32,7 +32,17 @@
 
 ### 从 Releases 下载安装
 
-1. 前往 [Releases](https://github.com/Ywocp/Touch-Video-Gestures/releases) 下载最新的 `touch-gesture-extension-v*.zip`
+**Android / Edge Canary → 用 `.crx`**
+
+1. 前往 [Releases](https://github.com/Ywocp/Touch-Video-Gestures/releases) 下载最新的 `touch-gesture-extension-v*.crx`
+2. 在浏览器中打开该文件，按提示确认安装即可
+
+> 适用于支持直接安装 crx 的浏览器，例如 **Microsoft Edge Canary（Android）**。
+> **桌面版 Chrome / Edge 会拦截非商店 crx**，桌面用户请用下面的 `.zip` 方式。
+
+**桌面版 → 用 `.zip`**
+
+1. 下载最新的 `touch-gesture-extension-v*.zip`
 2. 解压到任意目录
 3. 打开 `edge://extensions`（或 `chrome://extensions`），开启「开发人员模式」
 4. 点击「加载解压缩的扩展」，选择解压出的目录

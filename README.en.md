@@ -31,7 +31,17 @@ On a phone, tablet, or emulator, the browser's native video control bar is tiny 
 
 ### From Releases
 
-1. Go to [Releases](https://github.com/Ywocp/Touch-Video-Gestures/releases) and download the latest `touch-gesture-extension-v*.zip`
+**Android / Edge Canary → use the `.crx`**
+
+1. Go to [Releases](https://github.com/Ywocp/Touch-Video-Gestures/releases) and download the latest `touch-gesture-extension-v*.crx`
+2. Open the downloaded file in your browser and confirm the installation
+
+> Works on browsers that allow direct `.crx` installation, such as **Microsoft Edge Canary for Android**.
+> **Desktop Chrome / Edge block non-store `.crx` files** — desktop users should use the `.zip` below.
+
+**Desktop → use the `.zip`**
+
+1. Download the latest `touch-gesture-extension-v*.zip`
 2. Unzip it to any directory
 3. Open `edge://extensions` (or `chrome://extensions`) and turn on **Developer mode**
 4. Click **Load unpacked** and select the unzipped directory
