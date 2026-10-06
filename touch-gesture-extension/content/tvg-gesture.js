@@ -342,9 +342,16 @@ TVG.Gestures = (function () {
     seq.pointers.delete(e.pointerId);
     clearTimeout(seq.lpTimer);
     if (seq.pointers.size === 0) {
+      clearTimeout(seq._seekTimer);
+      var landed = (seq.mode === 'seek') ? commitSeek(seq) : null;
       if (seq.instant4x && seq.mode !== 'speed') setRate(seq.video, seq.userRate);
       if (seq.mode === 'longpress') setRate(seq.video, seq.userRate);
-      TVG.Toast.hide();
+      if (landed != null && !cfg().seekRealtime) {
+        // 非实时模式：给一次落地确认（真正的反馈是画面跳转，这里补一句文字）
+        TVG.Toast.show('已跳转 ' + fmt(landed), false, 700, seq.rect, seq.cont);
+      } else {
+        TVG.Toast.hide();
+      }
       releaseGrab();
       seq = null;
     } else if (seq.pointers.size === 1) {
@@ -417,6 +424,10 @@ TVG.Gestures = (function () {
 
   // ===== 手势动作 =====
 
+  // 进度拖动。两种模式（c.seekRealtime）：
+  //   默认 false —— 非实时：拖动过程中只预览目标时间、不写 currentTime，
+  //                 松手才跳转。避免边拖边 seek 让流媒体反复缓冲、画面闪烁。
+  //   true      —— 实时：节流 120ms 写入 currentTime，画面跟随手指。
   function seekTo(s, dx) {
     var v = s.video;
     if (!isFinite(v.duration)) { TVG.Toast.show('直播流，无法调整进度', false, 0, s.rect, s.cont); return; }
@@ -426,15 +437,32 @@ TVG.Gestures = (function () {
     var sec = Math.sign(dx) * (percent / 100) * v.duration;
     var t = clamp(s.baseTime + sec, 0, v.duration - 0.1);
     s._pendingSeek = t;
-    if (!s._seekTimer) {
-      s._seekTimer = setTimeout(function () {
-        s._seekTimer = null;
-        if (s._pendingSeek != null && s.video.isConnected) {
-          try { s.video.currentTime = s._pendingSeek; } catch (err) {}
-        }
-      }, 120);
+    var label = (dx > 0 ? '快进 +' : '快退 -') + percent.toFixed(1) + '% · ' + fmt(t) + ' / ' + fmt(v.duration);
+
+    if (cfg().seekRealtime) {
+      if (!s._seekTimer) {
+        s._seekTimer = setTimeout(function () {
+          s._seekTimer = null;
+          if (s._pendingSeek != null && s.video.isConnected) {
+            try { s.video.currentTime = s._pendingSeek; } catch (err) {}
+          }
+        }, 120);
+      }
+      TVG.Toast.show(label, false, 0, s.rect, s.cont);
+    } else {
+      TVG.Toast.show(label + ' · 松手生效', false, 0, s.rect, s.cont);
     }
-    TVG.Toast.show((dx > 0 ? '快进 +' : '快退 -') + percent.toFixed(1) + '% · ' + fmt(t) + ' / ' + fmt(v.duration), false, 0, s.rect, s.cont);
+  }
+
+  // 松手时提交进度跳转；返回实际落点，无待提交则返回 null。
+  // 实时模式下也走这里——补上最后一个节流窗口内尚未落地的位置。
+  function commitSeek(s) {
+    if (!s || s._pendingSeek == null) return null;
+    var t = s._pendingSeek;
+    s._pendingSeek = null;
+    if (!s.video || !s.video.isConnected) return null;
+    try { s.video.currentTime = t; } catch (e) {}
+    return t;
   }
 
   function nudgeSeek(v, sec, rect, cont) {

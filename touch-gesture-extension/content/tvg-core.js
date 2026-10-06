@@ -10,6 +10,7 @@ window.TVG = (function () {
     progress: true,
     seekMaxPercent: 50,   // 滑满半屏宽跳转的最大百分比
     seekCurve: 1.7,       // 非线性曲线指数，越大越平缓（小滑动更精准）
+    seekRealtime: false,  // 拖动时实时跳转？false=只预览、松手才加载（网络视频更顺）
 
     // 音量 / 亮度（仅全屏）
     volume: true,

@@ -3,7 +3,7 @@
 // ===== 默认值（与 content/tvg-core.js 保持一致）=====
 var DEFAULTS = {
   enabled: true,
-  progress: true, seekMaxPercent: 50, seekCurve: 1.7,
+  progress: true, seekMaxPercent: 50, seekCurve: 1.7, seekRealtime: false,
   volume: true, brightness: true, volGain: 1.2, brightGain: 1.2,
   fsGesture: true, fsReverse: false, fsEdgePercent: 34, fsThreshold: 40, blockDblFs: false,
   speed: true, speedStep: 0.25, instant4x: true, longPress4x: false, longPressMs: 500, longPressRate: 4,
@@ -34,6 +34,7 @@ var SECTIONS = [
       { key: 'progress', type: 'bool', label: '启用进度手势' },
       { key: 'seekMaxPercent', type: 'range', min: 5, max: 100, step: 5, unit: '%', label: '进度强度', hint: '滑满半屏宽跳转的最大百分比' },
       { key: 'seekCurve', type: 'range', min: 1, max: 3, step: 0.05, label: '曲线指数', hint: '数值越大越平缓，小幅滑动更精准' },
+      { key: 'seekRealtime', type: 'bool', label: '拖动时实时跳转', hint: '关闭（默认）＝拖动时只预览目标时间，松手才真正跳转，避免网络视频反复缓冲卡顿；开启＝拖动过程中画面实时跟随' },
       { type: 'curve' }
     ]
   },
