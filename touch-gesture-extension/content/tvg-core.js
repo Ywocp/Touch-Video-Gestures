@@ -20,7 +20,7 @@ window.TVG = (function () {
 
     // 全屏切换手势（单指纵向滑动，中间窄带）
     // 方向语义参照 PiliPlus：默认下滑进全屏、上滑退出；fsReverse 可反转
-    fsGesture: true,      // 总开关
+    fsGesture: false,     // 总开关（默认关闭：纵向滑动优先留给页面滚动；需要时在设置中开启）
     fsReverse: false,     // false=下滑进全屏/上滑退出；true=反过来
     fsEdgePercent: 20,    // 中间全屏窄带宽度（占视频宽度 %），左右两侧均分剩余
     fsThreshold: 40,      // 触发全屏切换所需的最小纵向位移（px）

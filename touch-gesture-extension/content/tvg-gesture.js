@@ -5,8 +5,8 @@
 //      脚本会在自身节点层拦截/停止传播触摸事件，容器级监听可能根本收不到。
 //   2. 触摸起手时按"触点落在哪个视频的矩形内"路由到该视频（取最小命中矩形），
 //      天然支持同页多视频：点到哪个就操作哪个。
-//   3. 视频区域内的触摸由本扩展全权处理：网站脚本收不到该触摸的事件流
-//      （详见下方「与网站脚本的事件隔离」）。
+//   3. 事件隔离采「观察-切断」策略：点击归网站（观察期完整放行）、手势归我们
+//      （成立瞬间切断 + 通知取消）——详见下方「与网站脚本的事件隔离」。
 window.TVG = window.TVG || {};
 TVG.Gestures = (function () {
   'use strict';
@@ -33,7 +33,7 @@ TVG.Gestures = (function () {
   var seq = null;             // 当前手势序列
   var fsGrab = null;          // 非全屏时临时锁定 pan-y 的容器（中间带起手）
   var liveTouches = 0;        // 当前按在屏幕上的触点数（touchstart/touchend 维护，多指判定兜底）
-  var mouseCaptured = false;  // 鼠标序列已被我们接管（mousedown 命中视频后，后续 move/up 一并切断）
+  var lastGestureEndAt = 0;   // 最近一次"手势成立"序列的结束时刻（尾巴 mouseup 的切断窗口）
   var live = true;            // 是否激活（main.js 在 storage 就绪后按「总开关 + 域名禁用」设置）
   var inited = false;
 
@@ -271,7 +271,8 @@ TVG.Gestures = (function () {
         var hit = hitVideo(e.clientX, e.clientY);
         if (!hit || hit !== seq.video) { stopSite(e); return; }
         clearTimeout(seq.lpTimer);
-        stopSite(e);                               // 该触摸归我们接管：网站不再收到它的事件流
+        stopSite(e);                               // 双指 = 明确手势：立即切断
+        notifySiteCancel();                        // 并通知网站取消其识别中的点击/手势
         if (seq.mode === 'longpress') {
           setRate(seq.video, seq.userRate);
           TVG.Toast.hide();
@@ -299,7 +300,7 @@ TVG.Gestures = (function () {
     if (!v) { releaseGrab(); return; }
     startSequence(e, v);
     seq.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
-    stopSite(e);   // 视频区域内的触摸由我们全权处理：切断网站脚本的事件流
+    // 「观察-切断」：pointerdown 放行（网站需要它识别点击）；手势成立后再切断
   }
 
   // 单指移动的统一处理。pointermove 与 touchmove 两条通道都调用它：
@@ -356,12 +357,15 @@ TVG.Gestures = (function () {
           seq.engaged = true;
           seq.baseVol = seq.video.muted ? 1 : seq.video.volume;
         } else {
-          // 非全屏外侧 / 功能关闭：放行给页面滚动
+          // 非全屏外侧 / 功能关闭：放行给页面滚动（不切断、不取消）
           seq.mode = 'scroll';
           seq.done = true;
           return;
         }
       }
+      // 手势确立（seek/亮度/音量/全屏）：通知网站取消其点击/滑动识别——
+      // 自此之后的 move/up 由 stopSite 切断（观察-切断策略）
+      notifySiteCancel();
     }
     if (seq.mode === 'seek') seekTo(seq, dx);
     else if (seq.mode === 'volume') setVolumeRel(seq, dy);
@@ -374,7 +378,8 @@ TVG.Gestures = (function () {
     if (!seq) return;
     var p = seq.pointers.get(e.pointerId);
     if (!p) return;
-    stopSite(e);          // 归属我们的指针：网站脚本不再收到其事件流
+    // 「观察-切断」：手势成立（engaged）后才切断；观察期内放行（网站要识别点击）
+    if (seq.engaged) stopSite(e);
     if (seq.done) return;
     p.x = e.clientX;
     p.y = e.clientY;
@@ -411,6 +416,9 @@ TVG.Gestures = (function () {
       else if (seq.mode === 'volume') setVolumeRel(seq, ddy);
       else if (seq.mode === 'brightness') setBrightnessRel(seq, ddy);
     }
+    // 本帧刚确立手势时（上面才置 engaged），同样要切断本帧——否则网站会收到
+    // "触发判定的那一次 move"（拖动起步恰好泄漏一帧，实测可被网站拖动计数捕获）
+    if (seq && seq.engaged) stopSite(e);
   }
 
   function onPointerUp(e) {
@@ -418,11 +426,12 @@ TVG.Gestures = (function () {
     if (!isActive()) return;
     if (!seq) return;
     if (!seq.pointers.has(e.pointerId)) return;
-    stopSite(e);                         // 与 down/move 一致：切断事件流
+    if (seq.engaged) stopSite(e);        // 手势成立后切断；纯点击路径全程放行
     seq.pointers.delete(e.pointerId);
     clearTimeout(seq.lpTimer);
     if (seq.pointers.size === 0) {
       clearTimeout(seq._seekTimer);
+      if (seq.engaged) lastGestureEndAt = Date.now();   // 供尾巴 mouseup 的切断窗口判断
       var landed = (seq.mode === 'seek') ? commitSeek(seq) : null;
       if (seq.instant4x && !seq.speedAdjusted) setRate(seq.video, seq.userRate);
       if (seq.mode === 'longpress') setRate(seq.video, seq.userRate);
@@ -457,12 +466,15 @@ TVG.Gestures = (function () {
     var t0 = e.touches && e.touches[0];
     var uiT = isUiTarget(e.target);
     var hit0 = (t0 && !uiT) ? hitVideo(t0.clientX, t0.clientY) : null;
-    // 视频区域内的触摸由我们全权接管：立即切断网站脚本（它的长按/滑动逻辑不从
-    // 这个触摸起步）。tap 合成的 click 不受影响，网站点击交互保留。
-    if (hit0) stopSite(e);
+    // 「观察-切断」：touchstart 一律放行 —— 网站的点击识别（tap 检测 → 显示
+    // 控制条）需要完整的触摸序列；判定为我们的手势后才切断（见 handleSingleMove/lpTimer）。
     // 序列进行中，第二指落在同一视频上：吃掉默认行为（防页面滚动/缩放）
     if (seq && seq.pointers.size >= 1 && e.touches.length >= 2 && e.cancelable && hit0) {
-      if (hit0 === seq.video) e.preventDefault();
+      if (hit0 === seq.video) {
+        e.preventDefault();
+        stopSite(e);            // 双指 = 明确手势：立即切断
+        notifySiteCancel();
+      }
       return;
     }
     // 非全屏时，触点落在中间全屏带：临时锁住容器的 pan-y，
@@ -490,37 +502,33 @@ TVG.Gestures = (function () {
     }
   }
 
-  // ===== 与网站脚本的事件隔离 =====
-  // 目标：视频区域内的触摸由我们全权处理 —— 网站脚本收不到该触摸的
-  // pointer/touch/mouse 事件流（它的长按、滑动、拖动、自绘菜单都不会响应）。
+  // ===== 与网站脚本的事件隔离（「观察-切断」策略，v1.0.7）=====
+  // 目标：点击归网站、手势归我们 —— 两者兼得。
+  //   · 观察期（按下 → 手势成立前）：事件全部放行 —— 网站的点击识别
+  //     （tap 检测 → 显示控制条、播放/暂停）需要完整的触摸序列；
+  //   · 手势成立瞬间：派发合成 cancel（通知网站取消其识别），此后该触摸的
+  //     move/up 一律 stopSite 切断 —— 网站的滑动/拖动/长按不会跟着响应；
   //   · 监听挂 window 捕获（事件流最前端）+ document_start 抢注册顺序：
   //     网站的任何监听都在我们之后执行，stopImmediatePropagation 可以全断；
-  //   · pointer 与 touch 之外，mouse 家族同样拦截（桌面鼠标 + 移动端合成 mouse）；
-  //   · 只有"事件流"被切断；tap 合成的 click 照常派发给网站，
-  //     网站正常的点击交互（显示控制条等）不受影响。
+  //   · contextmenu（系统菜单 + 网站自绘菜单入口）与 auxclick 始终全拦。
   function stopSite(e) {
     if (!e) return;
     if (e.stopImmediatePropagation) e.stopImmediatePropagation();
     if (e.stopPropagation) e.stopPropagation();
   }
 
-  // ---- mouse 家族拦截：桌面鼠标与「触摸合成的 mouse 事件」都要切断，
-  //      否则网站的 mousedown/mousemove/mouseup 监听仍会跟着响应 ----
-  function onMouseDown(e) {
-    if (!isActive()) return;
-    var v = hitVideo(e.clientX, e.clientY);
-    if (!v || isUiTarget(e.target)) return;   // 控件区域（如网站进度条）放行
-    mouseCaptured = true;
-    stopSite(e);
-  }
+  // ---- mouse 家族：与触摸同一套「观察-切断」策略 —— mousedown 放行（网站的
+  //      点击路径），手势成立后（engaged）的 mousemove/mouseup 才切断 ----
   function onMouseMove(e) {
-    if (!isActive() || !mouseCaptured) return;
+    if (!isActive() || !seq || !seq.engaged) return;
     stopSite(e);
   }
   function onMouseUp(e) {
-    if (!isActive() || !mouseCaptured) return;
-    stopSite(e);
-    mouseCaptured = false;
+    if (!isActive()) return;
+    if (seq && seq.engaged) { stopSite(e); return; }
+    // 尾巴 mouseup：鼠标场景下 mouseup 晚于 pointerup 到达（pointerup 已清掉序列），
+    // 落在"手势刚结束"的窗口内一律切断（否则网站会收到一次完整的按下-抬起）
+    if (Date.now() - lastGestureEndAt < 600) stopSite(e);
   }
   function onAuxClick(e) {
     if (!isActive()) return;
@@ -529,8 +537,8 @@ TVG.Gestures = (function () {
   }
 
   // 长按生效时向网站派发合成 cancel：规范实现的播放器库（Video.js 等）收到
-  // pointercancel/touchcancel 会中止自己正在进行的手势 —— 这是压制"长按触发
-  // 网站自有手势"的第二条路径（第一条是 stopSite 切断事件流）。
+  // pointercancel/touchcancel 会中止自己正在进行的手势和点击识别 —— 这是
+  // 压制"长按触发网站自有手势"的第二条路径（第一条是 stopSite 切断事件流）。
   // 合成事件带 __tvgSynthetic 标记，我们自己的监听器据此忽略它（否则会误清序列）。
   function notifySiteCancel() {
     var t = seq && seq.target;
@@ -556,7 +564,7 @@ TVG.Gestures = (function () {
   function onTouchMove(e) {
     if (!isActive()) return;
     liveTouches = (e.touches && e.touches.length) || 0;
-    if (seq) stopSite(e);   // 我们接管的触摸：网站脚本不再收到其事件流
+    if (seq && seq.engaged) stopSite(e);   // 手势成立后切断；观察期内放行（点击路径）
     // 与 pointermove 走同一条处理路径：单指时把 touchmove 也喂给统一处理函数。
     // Android 上 touch 事件最可靠；pointer 事件在个别环境可能丢失——
     // 双通道同时到达时处理天然幂等，丢任何一路手势都完整。
@@ -565,20 +573,21 @@ TVG.Gestures = (function () {
     }
     // 手势锁定后拦截后续滚动；其余情况放行（页面正常滚动）
     if (seq && seq.engaged && e.cancelable) e.preventDefault();
+    // 本帧刚确立手势时同样切断本帧（与 pointermove 一致，防止起步帧泄漏）
+    if (seq && seq.engaged) stopSite(e);
   }
 
   // touch 计数维护：isPrimary 不可用的环境（老内核）用它兜底判断当前有几指按着
   function onTouchCount(e) {
     if (e && e.__tvgSynthetic) return;   // 忽略合成 cancel
     if (!isActive()) return;
-    if (seq) stopSite(e);                // 与 down/move 保持一致
+    if (seq && seq.engaged) stopSite(e); // 手势成立后切断；点击路径放行
     liveTouches = (e.touches && e.touches.length) || 0;
   }
 
   // 页面失焦/切后台时兜底复位：这类情况 pointerup 可能收不到，
   // 残留的 seq 会让下一次触摸被当成"第二根手指"→ 直接进 instant4x。
   function resetSeq() {
-    mouseCaptured = false;
     if (!seq) return;
     clearTimeout(seq.lpTimer);
     clearTimeout(seq._seekTimer);
@@ -640,7 +649,8 @@ TVG.Gestures = (function () {
     var sec = Math.sign(dx) * (percent / 100) * v.duration;
     var t = clamp(s.baseTime + sec, 0, v.duration - 0.1);
     s._pendingSeek = t;
-    var label = (dx > 0 ? '快进 +' : '快退 -') + percent.toFixed(1) + '% · ' + fmt(t) + ' / ' + fmt(v.duration);
+    // 反馈用"时间差"而非百分比（更直观）：如「快进 +2:30 · 12:34 / 45:00」
+    var label = (dx > 0 ? '快进 +' : '快退 -') + fmt(Math.abs(sec)) + ' · ' + fmt(t) + ' / ' + fmt(v.duration);
 
     if (cfg().seekRealtime) {
       if (!s._seekTimer) {
@@ -840,8 +850,7 @@ TVG.Gestures = (function () {
     window.addEventListener('pointermove', onPointerMove, true);
     window.addEventListener('pointerup', onPointerUp, true);
     window.addEventListener('pointercancel', onPointerUp, true);
-    // mouse 家族：桌面鼠标与移动端合成 mouse 事件同样切断（网站仍在用它们）
-    window.addEventListener('mousedown', onMouseDown, true);
+    // mouse 家族：与触摸同一套「观察-切断」策略（mousedown 放行；手势成立后的 move/up 切断）
     window.addEventListener('mousemove', onMouseMove, true);
     window.addEventListener('mouseup', onMouseUp, true);
     window.addEventListener('auxclick', onAuxClick, true);

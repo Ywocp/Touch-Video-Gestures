@@ -5,7 +5,7 @@ var DEFAULTS = {
   enabled: true,
   progress: true, seekMaxPercent: 25, seekCurve: 3, seekRealtime: false,
   volume: true, brightness: true, volGain: 1.2, brightGain: 1.2,
-  fsGesture: true, fsReverse: false, fsEdgePercent: 20, fsThreshold: 40, blockDblFs: false,
+  fsGesture: false, fsReverse: false, fsEdgePercent: 20, fsThreshold: 40, blockDblFs: false,
   speed: true, speedStep: 0.25, instant4x: true, longPress4x: true, longPressMs: 500, longPressRate: 2,
   doubleTapSeek: true, seekStep: 10, doubleTapMs: 300,
   moveThreshold: 12,
@@ -55,7 +55,7 @@ var SECTIONS = [
   {
     title: '全屏切换手势（单指纵向，中间窄带）',
     fields: [
-      { key: 'fsGesture', type: 'bool', label: '启用全屏切换手势', hint: '在视频中间区域纵向滑动即可进/退全屏' },
+      { key: 'fsGesture', type: 'bool', label: '启用全屏切换手势', hint: '默认关闭（纵向滑动优先页面滚动）；开启后视频中间区域下滑进全屏、上滑退出' },
       { key: 'fsReverse', type: 'toggle', label: '手势方向', hint: '点按钮即时切换，无需保存' },
       { key: 'fsEdgePercent', type: 'range', min: 10, max: 60, step: 2, unit: '%', label: '中间窄带宽度', hint: '占视频宽度比例；左右两侧按剩余宽度均分（左亮度 / 右音量）' },
       { key: 'fsThreshold', type: 'range', min: 20, max: 120, step: 5, unit: 'px', label: '触发位移阈值', hint: '纵向滑动超过该距离才切换，防止误触' },
