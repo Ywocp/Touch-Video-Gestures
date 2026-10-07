@@ -97,7 +97,7 @@ var SECTIONS = [
     fields: [
       { key: 'orientationLock', type: 'bool', label: '全屏宽视频锁定横屏' },
       { key: 'toastY', type: 'range', min: 5, max: 95, step: 5, unit: '%', label: '提示框位置', hint: '在视频高度中的百分比；放低时自动避让进度条' },
-      { key: 'toastFont', type: 'range', min: 8, max: 20, step: 1, unit: 'px', label: '提示框字号' },
+      { key: 'toastFont', type: 'range', min: 6, max: 20, step: 1, unit: 'px', label: '提示框字号', hint: '基准字号，随视频大小自适应缩放（小视频上自动缩小，大屏上自动放大）' },
       { key: 'toastOpacity', type: 'range', min: 30, max: 100, step: 5, unit: '%', label: '提示框不透明度', hint: '数值越低越透明' },
       { key: 'toastMs', type: 'range', min: 500, max: 3000, step: 100, unit: 'ms', label: '提示框停留时长' },
       { key: 'hintOnAttach', type: 'bool', label: '显示"手势已启用"提示', hint: '进入含视频的页面时提示一次，用于确认引擎工作' }

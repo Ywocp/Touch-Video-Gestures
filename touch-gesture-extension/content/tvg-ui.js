@@ -48,7 +48,13 @@ TVG.Toast = (function () {
     t.textContent = text;
 
     var c = TVG.Settings || TVG.DEFAULTS;
-    t.style.fontSize = (c.toastFont || 14) + 'px';
+    // 字号随视频尺寸自适应（v1.0.9）：以 400px 视频高为基准缩放——小视频上
+    // 不再显得突兀、大屏上也不至于太小；夹在 [6,30]px，padding 同比例缩放
+    var base = (typeof c.toastFont === 'number') ? c.toastFont : 8;
+    var k = 1;
+    if (anchor && anchor.height > 4) k = TVG.clamp(anchor.height / 400, 0.5, 2);
+    t.style.fontSize = Math.max(6, Math.min(30, Math.round(base * k))) + 'px';
+    t.style.padding = Math.max(4, Math.round(8 * k)) + 'px ' + Math.max(8, Math.round(16 * k)) + 'px';
     var op = (typeof c.toastOpacity === 'number' ? c.toastOpacity : 86) / 100;
     t.style.background = 'rgba(20, 20, 24, ' + op + ')';
 

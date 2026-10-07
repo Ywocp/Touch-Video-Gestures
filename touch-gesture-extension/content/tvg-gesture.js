@@ -34,7 +34,7 @@ TVG.Gestures = (function () {
   var brightnessMap = new WeakMap();
   var lastTapMap = new WeakMap();
   var seq = null;             // 当前手势序列
-  var fsGrab = null;          // 非全屏时临时锁定 pan-y 的容器（中间带起手）
+  var fsGrab = null;          // 非全屏时临时锁定 pan-y 的容器（中间带起手，v1.0.8 起为兜底）
   var liveTouches = 0;        // 当前按在屏幕上的触点数（touchstart/touchend 维护，多指判定兜底）
   var lastGestureEndAt = 0;   // 最近一次"手势成立"序列的结束时刻（尾巴 mouseup 的切断窗口）
   var live = true;            // 是否激活（main.js 在 storage 就绪后按「总开关 + 域名禁用」设置）
@@ -213,9 +213,46 @@ TVG.Gestures = (function () {
     return null;
   }
 
-  // 进入 / 退出全屏。容器或视频均可作为全屏目标；站点自定义伪全屏无法程序化
-  // 控制时，用 requestFullscreen 兜底（失败静默）。
+  // 找站点自己的"全屏"按钮（v1.0.9）：优先点击站内按钮触发站点的原生全屏逻辑，
+  // 这样站点的 UI（控制条 / 进度条 / 全屏状态类）随其自身状态正常工作；
+  // 找不到按钮才回退浏览器全屏 API（旧行为）。
+  function findFsButton(scope) {
+    if (!scope || !scope.querySelectorAll) return null;
+    var sels = [
+      '[data-plyr="fullscreen"]',          // Plyr
+      '.vjs-fullscreen-control',           // Video.js
+      '.jw-icon-fullscreen',               // JW Player
+      '[class*="fullscreen" i][class*="btn" i]',
+      '[class*="btn" i][class*="fullscreen" i]',
+      'button[class*="fullscreen" i]',
+      '[class*="fullscreen" i]',
+      'button[aria-label*="fullscreen" i]', '[aria-label*="fullscreen" i]',
+      '[title*="fullscreen" i]',
+      'button[title*="全屏"]', '[aria-label*="全屏"]', '[title*="全屏"]'
+    ];
+    for (var i = 0; i < sels.length; i++) {
+      var list;
+      try { list = scope.querySelectorAll(sels[i]); } catch (e1) { continue; }
+      for (var j = 0; j < list.length; j++) {
+        var el = list[j];
+        if (!el || !el.getBoundingClientRect) continue;
+        var r = el.getBoundingClientRect();
+        if (r.width * r.height > 30000) continue;              // 排除整块容器 / 封面层
+        if (el.querySelector && el.querySelector('video')) continue; // 不含视频元素的才算按钮
+        return el;
+      }
+    }
+    return null;
+  }
+
+  // 进入 / 退出全屏。首选"点击站点的全屏按钮"（站点原生全屏：控制条/进度条
+  // 随站点自身全屏状态工作）；站点没有按钮时回退 requestFullscreen API。
   function toggleFullscreen(s, enter) {
+    var scope = enter ? s.cont : (document.fullscreenElement || s.cont);
+    var btn = findFsButton(scope) || findFsButton(s.cont);
+    if (btn) {
+      try { btn.click(); return true; } catch (e0) {}
+    }
     var el = (s.cont && s.cont.requestFullscreen && s.cont) ||
              (s.video && s.video.requestFullscreen && s.video) || null;
     try {
@@ -246,6 +283,8 @@ TVG.Gestures = (function () {
       rect: cont.getBoundingClientRect(),
       pointers: new Map(),
       target: e.target,      // 起始触点目标：长按生效时向网站派发 cancel 事件（中止其自有手势）
+      bandEl: (e.target && e.target.closest) ? (e.target.closest('.tvg-band') || null) : null,
+                             // 起手是否落在预置带上（决定轻点是否需要"转发点击"）
       firstId: e.pointerId,  // 首个指针 id（合成 cancel 事件用）
       ptype: e.pointerType, // 序列的指针类型：多指手势要求同类型（都是 touch），并用于识别双路重复事件
       t0: Date.now(),       // 序列开始时刻（识别"双路重复事件"的时间窗）
@@ -489,6 +528,13 @@ TVG.Gestures = (function () {
     clearTimeout(seq.lpTimer);
     if (seq.pointers.size === 0) {
       clearTimeout(seq._seekTimer);
+      // 预置带上"未成手势"的轻点（tap）：把点击还给"带下面的真实元素" ——
+      // 抑制目标错误的原生 click + 按带下元素补发（保住网站的点按逻辑，v1.0.9）
+      if (!seq.engaged && !seq.done && seq.bandEl &&
+          typeof e.clientX === 'number' && typeof e.clientY === 'number' &&
+          Math.hypot(e.clientX - seq.sx, e.clientY - seq.sy) < 12) {
+        forwardBandTap(seq.bandEl, e.clientX, e.clientY);
+      }
       if (seq.engaged) lastGestureEndAt = Date.now();   // 供尾巴 mouseup 的切断窗口判断
       var landed = (seq.mode === 'seek') ? commitSeek(seq) : null;
       if (seq.instant4x && !seq.speedAdjusted) setRate(seq.video, seq.userRate);
@@ -575,6 +621,45 @@ TVG.Gestures = (function () {
     if (!e) return;
     if (e.stopImmediatePropagation) e.stopImmediatePropagation();
     if (e.stopPropagation) e.stopPropagation();
+  }
+
+  // ---- 预置带轻点转发（v1.0.9）----
+  // 带吃掉了命中测试：原生 click 的目标是"带"本身，网站的"点视频弹控制条"
+  // 一类逻辑（校验 target 是视频 / 包裹层）收不到。处理：
+  //   1) 轻点未成手势 → 先标记"抑制下一次带上原生 click"（目标错误）；
+  //   2) 按带下的真实元素（elementFromPoint）补发一次正确的 click。
+  //   不带手势冲突的一切交互由此保真（点按弹控制条、点按播放器按钮等）。
+  var suppressBandClick = false;
+  var suppressTimer = 0;
+
+  function forwardBandTap(band, x, y) {
+    var under = null;
+    try {
+      band.style.pointerEvents = 'none';
+      under = document.elementFromPoint(x, y);
+      band.style.pointerEvents = '';
+    } catch (e0) { try { band.style.pointerEvents = ''; } catch (e1) {} }
+    if (!under || under === band) return;
+    suppressBandClick = true;
+    clearTimeout(suppressTimer);
+    suppressTimer = setTimeout(function () { suppressBandClick = false; }, 800);
+    try {
+      var ev = new MouseEvent('click', {
+        bubbles: true, cancelable: true, composed: true, view: window,
+        clientX: x, clientY: y, detail: 1
+      });
+      under.dispatchEvent(ev);
+    } catch (e2) {}
+  }
+
+  function onClickCapture(e) {
+    if (!suppressBandClick) return;
+    var t = e.target;
+    if (!t || !t.closest) return;
+    if (!t.closest('.tvg-band')) return;   // 还不是"带上那次"原生 click → 保留标记
+    suppressBandClick = false;
+    clearTimeout(suppressTimer);
+    stopSite(e);
   }
 
   // ---- mouse 家族：与触摸同一套「观察-切断」策略 —— mousedown 放行（网站的
@@ -935,6 +1020,8 @@ TVG.Gestures = (function () {
     window.addEventListener('touchcancel', onTouchCount, { capture: true, passive: true });
     window.addEventListener('contextmenu', onContext, true);
     window.addEventListener('dblclick', onDblClick, true);
+    // 预置带轻点的"原生 click 抑制"（配合 forwardBandTap 补发正确目标的点击）
+    window.addEventListener('click', onClickCapture, true);
     // 以下事件不属于竞争事件，按规范挂在对应对象上
     document.addEventListener('fullscreenchange', updateFsClass, true);
     document.addEventListener('visibilitychange', function () { if (document.hidden) resetSeq(); }, true);
