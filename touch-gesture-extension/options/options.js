@@ -21,7 +21,14 @@ var PRESETS = {
 };
 
 // ===== 面板结构 =====
+// pageOnly: true 的字段组只在完整设置页展示（popup 里没有足够空间，且属于管理性质）
 var SECTIONS = [
+  {
+    title: '通用',
+    fields: [
+      { key: 'enabled', type: 'bool', label: '总开关', hint: '关闭后所有手势失效' }
+    ]
+  },
   {
     title: '当前网站',
     fields: [
@@ -30,14 +37,9 @@ var SECTIONS = [
   },
   {
     title: '禁用域名',
+    pageOnly: true,
     fields: [
       { key: 'disabledSites', type: 'sites', label: '每行一个域名', hint: '例如 example.com，其子域一并禁用' }
-    ]
-  },
-  {
-    title: '通用',
-    fields: [
-      { key: 'enabled', type: 'bool', label: '总开关', hint: '关闭后所有手势失效' }
     ]
   },
   {
@@ -125,9 +127,20 @@ var store = (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.s
 };
 
 // ===== 渲染 =====
+// popup（工具栏弹窗，body.popup-mode）空间有限，只放常用开关；
+// pageOnly 字段组留给完整设置页。
+function isPopupMode() {
+  try {
+    return !!(document.body && document.body.classList &&
+              document.body.classList.contains('popup-mode'));
+  } catch (e) { return false; }
+}
+
 function build() {
   var form = document.getElementById('form');
+  var popup = isPopupMode();
   SECTIONS.forEach(function (sec) {
+    if (sec.pageOnly && popup) return;
     var box = document.createElement('section');
     var h = document.createElement('h2');
     h.textContent = sec.title;
