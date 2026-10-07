@@ -30,6 +30,7 @@ TVG.Gestures = (function () {
   var lastTapMap = new WeakMap();
   var seq = null;             // 当前手势序列
   var fsGrab = null;          // 非全屏时临时锁定 pan-y 的容器（中间带起手）
+  var liveTouches = 0;        // 当前按在屏幕上的触点数（touchstart/touchend 维护，多指判定兜底）
   var inited = false;
 
   function cfg() { return TVG.Settings || TVG.DEFAULTS; }
@@ -172,10 +173,13 @@ TVG.Gestures = (function () {
       cont: cont,
       rect: cont.getBoundingClientRect(),
       pointers: new Map(),
+      ptype: e.pointerType, // 序列的指针类型：多指手势要求同类型（都是 touch），并用于识别双路重复事件
+      t0: Date.now(),       // 序列开始时刻（识别"双路重复事件"的时间窗）
       mode: null,        // seek | scroll | speed | volume | brightness | longpress | none
       engaged: false,
       done: false,
       instant4x: false,
+      speedAdjusted: false, // 本次序列是否真调过倍速（双指 speed 拖动）；没调过才在松手时恢复原速
       moved: false,      // 本次触摸是否已产生位移（位移即取消长按判定）
       fsDone: false,     // 全屏切换是否已触发（锁定，防抖动反复切换）
       sx: e.clientX,
@@ -230,29 +234,46 @@ TVG.Gestures = (function () {
     if (isUiTarget(e.target)) { releaseGrab(); return; }
 
     if (seq && seq.pointers.size > 0) {
-      // 已有进行中的序列：第二指必须落在同一视频上
-      var hit = hitVideo(e.clientX, e.clientY);
-      if (!hit || hit !== seq.video) return;
-      clearTimeout(seq.lpTimer);
-      if (seq.mode === 'longpress') {
-        setRate(seq.video, seq.userRate);
+      // 已有序列时的 pointerdown：先甄别这是不是"真实的第二根手指"。
+      // 两类假双指会把单指拖动误判成双指倍速（实测都会发生，必须挡掉）：
+      //   ① 双路重复事件：个别模拟器把同一次触摸同时发成 mouse + touch 两路
+      //      pointer 流，几乎同时到达、类型不同 → 忽略后到的那一路；
+      //   ② 残留序列：上一次 pointerup 丢失导致 seq 没清，新触摸被当成第二指。
+      //      客观判据：全新触摸会话的第一根手指 isPrimary === true。
+      var sameType = (e.pointerType === seq.ptype);
+      var fresh = (Date.now() - (seq.t0 || 0)) < 200;
+      if (!sameType && fresh) return;              // ① 双路重复 → 忽略第二路
+      var realSecond = sameType && e.pointerType === 'touch' &&
+        (e.isPrimary === false ||
+         (typeof e.isPrimary !== 'boolean' && liveTouches >= 2));
+      if (!realSecond) {
+        resetSeq();                                // ② 残留 → 清理后按全新触摸处理
+      } else {
+        // 第二指必须落在同一视频上
+        var hit = hitVideo(e.clientX, e.clientY);
+        if (!hit || hit !== seq.video) return;
+        clearTimeout(seq.lpTimer);
+        if (seq.mode === 'longpress') {
+          setRate(seq.video, seq.userRate);
+          TVG.Toast.hide();
+          seq.mode = null;
+          seq.engaged = false;
+        }
         seq.mode = null;
-        seq.engaged = false;
+        seq.done = false;
+        seq.baseRate = seq.userRate;
+        if (c.instant4x) {
+          seq.instant4x = true;
+          setRate(seq.video, 4);
+          TVG.Toast.show('4x 倍速', true, 0, seq && seq.rect, seq && seq.cont);
+        }
+        seq.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        var ps = [];
+        seq.pointers.forEach(function (p) { ps.push(p); });
+        seq.mx = (ps[0].x + ps[1].x) / 2;
+        seq.my = (ps[0].y + ps[1].y) / 2;
+        return;
       }
-      seq.mode = null;
-      seq.done = false;
-      seq.baseRate = seq.userRate;
-      if (c.instant4x) {
-        seq.instant4x = true;
-        setRate(seq.video, 4);
-        TVG.Toast.show('4x 倍速', true, 0, seq && seq.rect, seq && seq.cont);
-      }
-      seq.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
-      var ps = [];
-      seq.pointers.forEach(function (p) { ps.push(p); });
-      seq.mx = (ps[0].x + ps[1].x) / 2;
-      seq.my = (ps[0].y + ps[1].y) / 2;
-      return;
     }
 
     var v = hitVideo(e.clientX, e.clientY);
@@ -261,76 +282,89 @@ TVG.Gestures = (function () {
     seq.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
   }
 
+  // 单指移动的统一处理。pointermove 与 touchmove 两条通道都调用它：
+  //   - 双通道同时到达时天然幂等（判定全部基于相对起点的绝对位移，不依赖增量）；
+  //   - pointer 事件在个别环境（模拟器/合成事件）可能丢失，touchmove 兜底后
+  //     手势依然完整（长按退出、进度拖动不再依赖单一路径）。
+  function handleSingleMove(x, y) {
+    if (!seq || seq.done) return;
+    var c = cfg();
+    var dx = x - seq.sx;
+    var dy = y - seq.sy;
+    // 同步记录触点位置：长按定时器要用它复核位移（双保险之一）
+    var q0 = null;
+    seq.pointers.forEach(function (z) { if (!q0) q0 = z; });
+    if (q0) { q0.x = x; q0.y = y; }
+    // 产生位移 → 取消长按判定（在拖动进度/滑动时绝不触发长按倍速）
+    if (!seq.moved && Math.hypot(dx, dy) > 8) {
+      seq.moved = true;
+      clearTimeout(seq.lpTimer);
+    }
+    // 长按倍速已生效后若手指开始拖动：立刻退出倍速，并把基准重置到当前位置，
+    // 交还给下面的手势判定。否则长按一旦先触发，seq.mode 已非空，
+    // 模式判定会被整个跳过 → 拖动被吞掉，只留下 2x 在跑
+    // （表现为"拖动进度时同步触发了倍速"）。
+    if (seq.mode === 'longpress') {
+      if (Math.hypot(dx, dy) < c.moveThreshold) return;   // 尚未真正拖动，保持倍速
+      setRate(seq.video, seq.userRate);
+      TVG.Toast.hide();                                   // 撤掉常驻的"Nx 倍速"提示，否则会一直挂在画面上
+      seq.mode = null;
+      seq.engaged = false;
+      seq.sx = x;
+      seq.sy = y;
+      seq.baseTime = seq.video.currentTime;               // 长按期间视频在播，进度基准要重取
+      seq.baseVol = seq.video.muted ? 1 : seq.video.volume;
+      seq.baseBright = getBrightness(seq.video);
+      seq.moved = true;
+      return;                                             // 本帧只复位基准，下一帧按新基准判定
+    }
+    if (!seq.mode) {
+      if (Math.hypot(dx, dy) < c.moveThreshold) return;
+      if (Math.abs(dx) > Math.abs(dy) * 1.2 && c.progress) {
+        seq.mode = 'seek';
+        seq.engaged = true;
+      } else {
+        // 纵向手势：先看落点区域
+        //   'fs'  → 全屏切换（全屏/非全屏都生效，这是退出全屏的唯一入口）
+        //   'bright'/'vol' → 仅在已全屏时生效（非全屏放行给页面滚动，防误触）
+        var reg = regionOf(seq, seq.sx);
+        var fs = fsNow();
+        if (reg === 'fs' && c.fsGesture) {
+          seq.mode = 'fs';
+          seq.engaged = true;
+          seq.fsDone = false;
+        } else if (fs && reg === 'bright') {
+          seq.mode = 'brightness';
+          seq.engaged = true;
+          seq.baseBright = getBrightness(seq.video);
+        } else if (fs && reg === 'vol') {
+          seq.mode = 'volume';
+          seq.engaged = true;
+          seq.baseVol = seq.video.muted ? 1 : seq.video.volume;
+        } else {
+          // 非全屏外侧 / 功能关闭：放行给页面滚动
+          seq.mode = 'scroll';
+          seq.done = true;
+          return;
+        }
+      }
+    }
+    if (seq.mode === 'seek') seekTo(seq, dx);
+    else if (seq.mode === 'volume') setVolumeRel(seq, dy);
+    else if (seq.mode === 'brightness') setBrightnessRel(seq, dy);
+    else if (seq.mode === 'fs') fsSwipe(seq, dy);
+  }
+
   function onPointerMove(e) {
     if (!seq) return;
     var p = seq.pointers.get(e.pointerId);
     if (!p || seq.done) return;
     p.x = e.clientX;
     p.y = e.clientY;
-    var c = cfg();
-
     if (seq.pointers.size === 1) {
-      var dx = e.clientX - seq.sx;
-      var dy = e.clientY - seq.sy;
-      // 产生位移 → 取消长按判定（在拖动进度/滑动时绝不触发长按倍速）
-      if (!seq.moved && Math.hypot(dx, dy) > 8) {
-        seq.moved = true;
-        clearTimeout(seq.lpTimer);
-      }
-      // 长按倍速已生效后若手指开始拖动：立刻退出倍速，并把基准重置到当前位置，
-      // 交还给下面的手势判定。否则长按一旦先触发，seq.mode 已非空，
-      // 模式判定会被整个跳过 → 拖动被吞掉，只留下 2x 在跑
-      // （表现为"拖动进度时同步触发了倍速"）。
-      if (seq.mode === 'longpress') {
-        if (Math.hypot(dx, dy) < c.moveThreshold) return;   // 尚未真正拖动，保持倍速
-        setRate(seq.video, seq.userRate);
-        TVG.Toast.hide();                                   // 撤掉常驻的"Nx 倍速"提示，否则会一直挂在画面上
-        seq.mode = null;
-        seq.engaged = false;
-        seq.sx = e.clientX;
-        seq.sy = e.clientY;
-        seq.baseTime = seq.video.currentTime;               // 长按期间视频在播，进度基准要重取
-        seq.baseVol = seq.video.muted ? 1 : seq.video.volume;
-        seq.baseBright = getBrightness(seq.video);
-        seq.moved = true;
-        return;                                             // 本帧只复位基准，下一帧按新基准判定
-      }
-      if (!seq.mode) {
-        if (Math.hypot(dx, dy) < c.moveThreshold) return;
-        if (Math.abs(dx) > Math.abs(dy) * 1.2 && c.progress) {
-          seq.mode = 'seek';
-          seq.engaged = true;
-        } else {
-          // 纵向手势：先看落点区域
-          //   'fs'  → 全屏切换（全屏/非全屏都生效，这是退出全屏的唯一入口）
-          //   'bright'/'vol' → 仅在已全屏时生效（非全屏放行给页面滚动，防误触）
-          var reg = regionOf(seq, seq.sx);
-          var fs = fsNow();
-          if (reg === 'fs' && c.fsGesture) {
-            seq.mode = 'fs';
-            seq.engaged = true;
-            seq.fsDone = false;
-          } else if (fs && reg === 'bright') {
-            seq.mode = 'brightness';
-            seq.engaged = true;
-            seq.baseBright = getBrightness(seq.video);
-          } else if (fs && reg === 'vol') {
-            seq.mode = 'volume';
-            seq.engaged = true;
-            seq.baseVol = seq.video.muted ? 1 : seq.video.volume;
-          } else {
-            // 非全屏外侧 / 功能关闭：放行给页面滚动
-            seq.mode = 'scroll';
-            seq.done = true;
-            return;
-          }
-        }
-      }
-      if (seq.mode === 'seek') seekTo(seq, dx);
-      else if (seq.mode === 'volume') setVolumeRel(seq, dy);
-      else if (seq.mode === 'brightness') setBrightnessRel(seq, dy);
-      else if (seq.mode === 'fs') fsSwipe(seq, dy);
+      handleSingleMove(e.clientX, e.clientY);
     } else if (seq.pointers.size === 2) {
+      var c = cfg();
       var ps = [];
       seq.pointers.forEach(function (q) { ps.push(q); });
       var mx = (ps[0].x + ps[1].x) / 2;
@@ -370,7 +404,7 @@ TVG.Gestures = (function () {
     if (seq.pointers.size === 0) {
       clearTimeout(seq._seekTimer);
       var landed = (seq.mode === 'seek') ? commitSeek(seq) : null;
-      if (seq.instant4x && seq.mode !== 'speed') setRate(seq.video, seq.userRate);
+      if (seq.instant4x && !seq.speedAdjusted) setRate(seq.video, seq.userRate);
       if (seq.mode === 'longpress') setRate(seq.video, seq.userRate);
       if (landed != null && !cfg().seekRealtime) {
         // 非实时模式：给一次落地确认（真正的反馈是画面跳转，这里补一句文字）
@@ -386,13 +420,20 @@ TVG.Gestures = (function () {
       seq.pointers.forEach(function (q) { if (!rest) rest = q; });
       seq.sx = rest.x;
       seq.sy = rest.y;
-      seq.userRate = seq.video.playbackRate;
+      // instant4x（双指瞬时 4x）只在双指期间有效：掉到单指且未真调过倍速时
+      // 立即恢复原速。注意不要用当前 playbackRate 覆盖 userRate——4x 生效中
+      // 会把 4 记成"用户基准速率"，最后松手时恢复成 4x 卡住。
+      if (seq.instant4x) {
+        if (!seq.speedAdjusted) setRate(seq.video, seq.userRate);
+        seq.instant4x = false;
+      }
       seq.mode = null;
       seq.done = false;
     }
   }
 
   function onTouchStart(e) {
+    liveTouches = (e.touches && e.touches.length) || 0;
     // 序列进行中，第二指落在同一视频上：吃掉默认行为（防页面滚动/缩放）
     if (seq && seq.pointers.size >= 1 && e.touches.length >= 2 && e.cancelable && !isUiTarget(e.target)) {
       var hit = hitVideo(e.touches[0].clientX, e.touches[0].clientY);
@@ -428,22 +469,20 @@ TVG.Gestures = (function () {
   }
 
   function onTouchMove(e) {
-    // 与 pointermove 双保险：单指有位移就取消长按判定，并刷新记录的触点位置。
-    // Android 上 touch 事件最可靠，用它兜住 pointer 事件可能丢失的情况
-    // （否则长按会在拖动过程中误触发，见 lpTimer 里的说明）。
+    liveTouches = (e.touches && e.touches.length) || 0;
+    // 与 pointermove 走同一条处理路径：单指时把 touchmove 也喂给统一处理函数。
+    // Android 上 touch 事件最可靠；pointer 事件在个别环境可能丢失——
+    // 双通道同时到达时处理天然幂等，丢任何一路手势都完整。
     if (seq && seq.pointers.size === 1 && e.touches && e.touches.length === 1) {
-      var t = e.touches[0];
-      var mvx = t.clientX - seq.sx, mvy = t.clientY - seq.sy;
-      if (!seq.moved && Math.hypot(mvx, mvy) > 8) {
-        seq.moved = true;
-        clearTimeout(seq.lpTimer);
-      }
-      var q0 = null;
-      seq.pointers.forEach(function (z) { if (!q0) q0 = z; });
-      if (q0) { q0.x = t.clientX; q0.y = t.clientY; }
+      handleSingleMove(e.touches[0].clientX, e.touches[0].clientY);
     }
     // 手势锁定后拦截后续滚动；其余情况放行（页面正常滚动）
     if (seq && seq.engaged && e.cancelable) e.preventDefault();
+  }
+
+  // touch 计数维护：isPrimary 不可用的环境（老内核）用它兜底判断当前有几指按着
+  function onTouchCount(e) {
+    liveTouches = (e.touches && e.touches.length) || 0;
   }
 
   // 页面失焦/切后台时兜底复位：这类情况 pointerup 可能收不到，
@@ -452,7 +491,8 @@ TVG.Gestures = (function () {
     if (!seq) return;
     clearTimeout(seq.lpTimer);
     clearTimeout(seq._seekTimer);
-    if (seq.mode === 'longpress' || seq.instant4x) {
+    // 长按/双指 4x 生效中要恢复原速；但真调过倍速（speed 拖动）的结果保留
+    if (seq.mode === 'longpress' || (seq.instant4x && !seq.speedAdjusted)) {
       try { setRate(seq.video, seq.userRate); } catch (e) {}
     }
     TVG.Toast.hide();
@@ -534,6 +574,7 @@ TVG.Gestures = (function () {
     speed = Math.round(speed * 100) / 100;
     if (speed === s.video.playbackRate) return;
     setRate(s.video, speed);
+    s.speedAdjusted = true;   // 真调过倍速 → 松手时保留结果，不恢复原速
     TVG.Toast.show('倍速 ' + speed + 'x', true, 0, s.rect, s.cont);
   }
 
@@ -623,10 +664,14 @@ TVG.Gestures = (function () {
     cont.setAttribute('data-tvg-container', '');
     updateFsClass();
     lastReject = '';
-      // 首个视频注册时给一次性提示（可在设置关闭），便于确认引擎已工作
+      // 首个视频注册时给一次性提示（可在设置关闭），便于确认引擎已工作。
+      // 带版本号：用户一眼能确认页面里跑的是哪一版内容脚本——
+      // 扩展更新后已打开的页面仍可能驻留旧脚本，刷新前不会有新行为。
       if (registry.length === 1 && cfg().hintOnAttach) {
         try {
-          TVG.Toast.show('TVG 手势已启用', false);
+          var ver = '';
+          try { ver = chrome.runtime.getManifest().version; } catch (e2) {}
+          TVG.Toast.show('TVG v' + (ver || '?') + ' 手势已启用', false);
         } catch (e) {}
       }
       if (typeof console !== 'undefined' && console.debug) {
@@ -685,6 +730,8 @@ TVG.Gestures = (function () {
     document.addEventListener('pointercancel', onPointerUp, true);
     document.addEventListener('touchstart', onTouchStart, { capture: true, passive: false });
     document.addEventListener('touchmove', onTouchMove, { capture: true, passive: false });
+    document.addEventListener('touchend', onTouchCount, { capture: true, passive: true });
+    document.addEventListener('touchcancel', onTouchCount, { capture: true, passive: true });
     document.addEventListener('contextmenu', onContext, true);
     document.addEventListener('dblclick', onDblClick, true);
     // 全屏状态变化 → 更新容器的 touch-action 策略
