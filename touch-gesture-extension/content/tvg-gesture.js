@@ -1,10 +1,12 @@
-// 手势引擎：document 级捕获监听 + 触点几何路由
+// 手势引擎：window 捕获统一接收 + 触点几何路由
 // 设计要点：
-//   1. 不在播放器容器上绑事件，而是 document 捕获阶段统一接收——
-//      部分站点（如 Pornhub）的播放器脚本会在自身节点层拦截/停止传播触摸事件，
-//      容器级监听可能根本收不到；document 捕获最先收到，无法被中间层绕过。
+//   1. 不在播放器容器上绑事件，而在 window 捕获阶段统一接收（事件流最前端，
+//      配合 document_start 先于页面脚本注册）——部分站点（如 Pornhub）的播放器
+//      脚本会在自身节点层拦截/停止传播触摸事件，容器级监听可能根本收不到。
 //   2. 触摸起手时按"触点落在哪个视频的矩形内"路由到该视频（取最小命中矩形），
 //      天然支持同页多视频：点到哪个就操作哪个。
+//   3. 视频区域内的触摸由本扩展全权处理：网站脚本收不到该触摸的事件流
+//      （详见下方「与网站脚本的事件隔离」）。
 window.TVG = window.TVG || {};
 TVG.Gestures = (function () {
   'use strict';
@@ -99,15 +101,11 @@ TVG.Gestures = (function () {
     try { v.playbackRate = r; } catch (e) {}
   }
 
-  function isFullscreen() {
-    var fe = document.fullscreenElement;
-    if (fe) {
-      if (seq && (fe === seq.video || fe.contains(seq.video) ||
-          (seq.cont && (fe === seq.cont || fe.contains(seq.cont))))) return true;
-    }
-    // 回退判定：视口尺寸≈屏幕尺寸（覆盖 iframe 内全屏、浏览器全屏、
-    // 以及站点自定义"伪全屏"实现）
-    return viewportIsScreen();
+  // 取序列中的第一个触点（多处判定复用）
+  function firstPoint() {
+    var q = null;
+    if (seq) seq.pointers.forEach(function (z) { if (!q) q = z; });
+    return q;
   }
 
   function viewportIsScreen() {
@@ -228,14 +226,13 @@ TVG.Gestures = (function () {
     if (c.longPress4x) {
       seq.lpTimer = setTimeout(function () {
         if (!seq || seq.pointers.size !== 1) return;
-        var q = null;
-        seq.pointers.forEach(function (z) { if (!q) q = z; });
         // 长按判定：本次触摸必须"从未滑动过"。三重检查，任一失败即永久否决——
         //   ① seq.moved 标志：任何移动事件（pointermove / touchmove）到位移 ≥SLIDE_PX 时置位，
         //      置位即取消定时器；动态置位后这里的检查是兜底（防事件竞态）；
         //   ② 用最后记录的触点位置复核位移（防个别环境 move 事件送不到）；
         //   ③ 只要滑动迹象成立，就不再有任何"事后补救"的余地 —— 长按从不出现，
         //      而不是"出现后再退出"（用户视角：拖动时绝不能闪出倍速）。
+        var q = firstPoint();
         if (!q || seq.moved) return;
         if (Math.hypot(q.x - seq.sx, q.y - seq.sy) > SLIDE_PX) { seq.moved = true; return; }
         var rate = c.longPressRate || 4;
@@ -315,8 +312,7 @@ TVG.Gestures = (function () {
     var dx = x - seq.sx;
     var dy = y - seq.sy;
     // 同步记录触点位置：长按定时器要用它复核位移（双保险之一）
-    var q0 = null;
-    seq.pointers.forEach(function (z) { if (!q0) q0 = z; });
+    var q0 = firstPoint();
     if (q0) { q0.x = x; q0.y = y; }
     // 滑动一票否决：位移达到 SLIDE_PX 即认定"本次触摸是滑动"，
     // 长按资格永久作废（定时器立即取消，且 moved 标志让任何残余回调也不可能触发）。
@@ -440,8 +436,7 @@ TVG.Gestures = (function () {
       seq = null;
     } else if (seq.pointers.size === 1) {
       // 三指→两指 / 两指→单指：重置基准点防跳变
-      var rest = null;
-      seq.pointers.forEach(function (q) { if (!rest) rest = q; });
+      var rest = firstPoint();
       seq.sx = rest.x;
       seq.sy = rest.y;
       // instant4x（双指瞬时 4x）只在双指期间有效：掉到单指且未真调过倍速时
@@ -497,10 +492,9 @@ TVG.Gestures = (function () {
 
   // ===== 与网站脚本的事件隔离 =====
   // 目标：视频区域内的触摸由我们全权处理 —— 网站脚本收不到该触摸的
-  // pointer/touch/mouse 事件流（它的长按、滑动、拖动逻辑不会跟着同时响应）。
-  //   · 注册于 document_start → 我们是最先注册的 document 捕获监听：
-  //     即使网站监听注册在 document 捕获阶段，stopImmediatePropagation 也能
-  //     阻断其执行（后注册者不会收到）；
+  // pointer/touch/mouse 事件流（它的长按、滑动、拖动、自绘菜单都不会响应）。
+  //   · 监听挂 window 捕获（事件流最前端）+ document_start 抢注册顺序：
+  //     网站的任何监听都在我们之后执行，stopImmediatePropagation 可以全断；
   //   · pointer 与 touch 之外，mouse 家族同样拦截（桌面鼠标 + 移动端合成 mouse）；
   //   · 只有"事件流"被切断；tap 合成的 click 照常派发给网站，
   //     网站正常的点击交互（显示控制条等）不受影响。
@@ -598,14 +592,24 @@ TVG.Gestures = (function () {
   }
 
   function onContext(e) {
-    // 屏蔽长按系统菜单（Android 长按 video 的媒体菜单、文本选择等）：
-    //   ① 触摸序列进行中（含长按 2x 生效期间）
-    //   ② 无序列但长按点命中视频（边界兜底）
+    // 屏蔽两类"长按菜单"：
+    //   ① 系统菜单（Android 长按 video 的媒体菜单、文本选择等）；
+    //   ② 网站自绘菜单（如 Eporner Player 的 "Copy video URL" 菜单——由网站
+    //      自己的 contextmenu 监听弹出）。
+    // 关键：仅 preventDefault 只能挡下"默认行为"，网站监听照样收到事件、
+    // 照样弹它自己的菜单 —— 必须同时 stopSite 切断事件流。此前的疏漏正在于此。
     if (!isActive()) return;
     if (!cfg().longPress4x) return;
-    if (seq && seq.pointers.size > 0) { if (e.cancelable) e.preventDefault(); return; }
+    if (seq && seq.pointers.size > 0) {
+      stopSite(e);
+      if (e.cancelable) e.preventDefault();
+      return;
+    }
     var v = hitVideo(e.clientX, e.clientY);
-    if (v && e.cancelable) e.preventDefault();
+    if (v) {
+      stopSite(e);
+      if (e.cancelable) e.preventDefault();
+    }
   }
 
   // 屏蔽站点/浏览器自带的"双击进全屏"——网页里双击往往同时被浏览器当作
@@ -618,7 +622,7 @@ TVG.Gestures = (function () {
     if (!v) return;
     if (isUiTarget(e.target)) return;
     if (e.cancelable) e.preventDefault();
-    e.stopPropagation();
+    stopSite(e);
   }
 
   // ===== 手势动作 =====
@@ -828,25 +832,26 @@ TVG.Gestures = (function () {
   function init() {
     if (inited) return;
     inited = true;
-    // 全部 document 捕获阶段：先于站点脚本收到事件（配合 manifest 的
-    // run_at: document_start，我们是最早注册的 document 捕获监听 ——
-    // 这保证 stopSite 能阻断包括网站捕获级监听在内的所有后续监听器）
-    document.addEventListener('pointerdown', onPointerDown, true);
-    document.addEventListener('pointermove', onPointerMove, true);
-    document.addEventListener('pointerup', onPointerUp, true);
-    document.addEventListener('pointercancel', onPointerUp, true);
+    // 全部挂 window 捕获：事件流的最前端（window → document → … → target），
+    // 配合 document_start 抢到的注册顺序，构成最外层的"事件收割器"——
+    // 网站的任何监听（window/document/元素，捕获或冒泡）都在我们之后执行，
+    // stopSite 才能真正做到全断。
+    window.addEventListener('pointerdown', onPointerDown, true);
+    window.addEventListener('pointermove', onPointerMove, true);
+    window.addEventListener('pointerup', onPointerUp, true);
+    window.addEventListener('pointercancel', onPointerUp, true);
     // mouse 家族：桌面鼠标与移动端合成 mouse 事件同样切断（网站仍在用它们）
-    document.addEventListener('mousedown', onMouseDown, true);
-    document.addEventListener('mousemove', onMouseMove, true);
-    document.addEventListener('mouseup', onMouseUp, true);
-    document.addEventListener('auxclick', onAuxClick, true);
-    document.addEventListener('touchstart', onTouchStart, { capture: true, passive: false });
-    document.addEventListener('touchmove', onTouchMove, { capture: true, passive: false });
-    document.addEventListener('touchend', onTouchCount, { capture: true, passive: true });
-    document.addEventListener('touchcancel', onTouchCount, { capture: true, passive: true });
-    document.addEventListener('contextmenu', onContext, true);
-    document.addEventListener('dblclick', onDblClick, true);
-    // 全屏状态变化 → 更新容器的 touch-action 策略
+    window.addEventListener('mousedown', onMouseDown, true);
+    window.addEventListener('mousemove', onMouseMove, true);
+    window.addEventListener('mouseup', onMouseUp, true);
+    window.addEventListener('auxclick', onAuxClick, true);
+    window.addEventListener('touchstart', onTouchStart, { capture: true, passive: false });
+    window.addEventListener('touchmove', onTouchMove, { capture: true, passive: false });
+    window.addEventListener('touchend', onTouchCount, { capture: true, passive: true });
+    window.addEventListener('touchcancel', onTouchCount, { capture: true, passive: true });
+    window.addEventListener('contextmenu', onContext, true);
+    window.addEventListener('dblclick', onDblClick, true);
+    // 以下事件不属于竞争事件，按规范挂在对应对象上
     document.addEventListener('fullscreenchange', updateFsClass, true);
     document.addEventListener('visibilitychange', function () { if (document.hidden) resetSeq(); }, true);
     window.addEventListener('blur', resetSeq, true);
