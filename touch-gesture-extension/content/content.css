@@ -4,6 +4,11 @@
    横向平移交给脚本手势；触点落在控件上时由 JS 守卫放行 */
 [data-tvg-container] {
   touch-action: pan-y;
+  /* 抑制系统/浏览器的长按菜单与文本选择（Android 长按 video 的媒体菜单、
+     长按文字选择等），与 JS 的 contextmenu 拦截形成双层防护 */
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 /* 全屏时纵向滚动无意义，且 pan-y 会被浏览器用来抢走音量/亮度手势的前几帧；

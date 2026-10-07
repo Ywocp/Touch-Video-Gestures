@@ -178,6 +178,8 @@ TVG.Gestures = (function () {
       cont: cont,
       rect: cont.getBoundingClientRect(),
       pointers: new Map(),
+      target: e.target,      // 起始触点目标：长按生效时向网站派发 cancel 事件（中止其自有手势）
+      firstId: e.pointerId,  // 首个指针 id（合成 cancel 事件用）
       ptype: e.pointerType, // 序列的指针类型：多指手势要求同类型（都是 touch），并用于识别双路重复事件
       t0: Date.now(),       // 序列开始时刻（识别"双路重复事件"的时间窗）
       mode: null,        // seek | scroll | speed | volume | brightness | longpress | none
@@ -186,6 +188,7 @@ TVG.Gestures = (function () {
       instant4x: false,
       speedAdjusted: false, // 本次序列是否真调过倍速（双指 speed 拖动）；没调过才在松手时恢复原速
       moved: false,      // 本次触摸是否已滑动（位移 ≥SLIDE_PX）——一票否决长按，永久生效
+      lpHinted: false,   // 长按锁定后是否已提示过"松手后可拖动"
       fsDone: false,     // 全屏切换是否已触发（锁定，防抖动反复切换）
       sx: e.clientX,
       sy: e.clientY,
@@ -228,6 +231,7 @@ TVG.Gestures = (function () {
         seq.mode = 'longpress';
         seq.engaged = true;
         setRate(seq.video, rate);
+        notifySiteCancel();   // 向网站派发 cancel：中止它自己可能正在进行的手势/长按
         TVG.Toast.show(rate + 'x 倍速（松开恢复）', true, 0, seq.rect, seq.cont);
       }, c.longPressMs);
     }
@@ -247,7 +251,7 @@ TVG.Gestures = (function () {
       //      客观判据：全新触摸会话的第一根手指 isPrimary === true。
       var sameType = (e.pointerType === seq.ptype);
       var fresh = (Date.now() - (seq.t0 || 0)) < 200;
-      if (!sameType && fresh) return;              // ① 双路重复 → 忽略第二路
+      if (!sameType && fresh) { stopSite(e); return; }   // ① 双路重复 → 忽略第二路
       var realSecond = sameType && e.pointerType === 'touch' &&
         (e.isPrimary === false ||
          (typeof e.isPrimary !== 'boolean' && liveTouches >= 2));
@@ -256,8 +260,9 @@ TVG.Gestures = (function () {
       } else {
         // 第二指必须落在同一视频上
         var hit = hitVideo(e.clientX, e.clientY);
-        if (!hit || hit !== seq.video) return;
+        if (!hit || hit !== seq.video) { stopSite(e); return; }
         clearTimeout(seq.lpTimer);
+        stopSite(e);                               // 该触摸归我们接管：网站不再收到它的事件流
         if (seq.mode === 'longpress') {
           setRate(seq.video, seq.userRate);
           TVG.Toast.hide();
@@ -285,6 +290,7 @@ TVG.Gestures = (function () {
     if (!v) { releaseGrab(); return; }
     startSequence(e, v);
     seq.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    stopSite(e);   // 视频区域内的触摸由我们全权处理：切断网站脚本的事件流
   }
 
   // 单指移动的统一处理。pointermove 与 touchmove 两条通道都调用它：
@@ -307,23 +313,16 @@ TVG.Gestures = (function () {
       seq.moved = true;
       clearTimeout(seq.lpTimer);
     }
-    // 长按倍速已生效后若手指开始拖动：立刻退出倍速，并把基准重置到当前位置，
-    // 交还给下面的手势判定。否则长按一旦先触发，seq.mode 已非空，
-    // 模式判定会被整个跳过 → 拖动被吞掉，只留下 2x 在跑
-    // （表现为"拖动进度时同步触发了倍速"）。
+    // 赢家锁定（对标 PiliPlus 的手势仲裁：赢家通吃）——长按已生效，本次触摸
+    // 就锁定为长按：移动不再切换为拖动。旧设计"长按后拖动再接管"让一个触摸
+    // 串了两个动作，正是"长按倍速的同时又滑动了进度条"的根源。
+    // 只提醒一次如何真正拖动（松手重按），避免用户困惑。
     if (seq.mode === 'longpress') {
-      if (Math.hypot(dx, dy) < c.moveThreshold) return;   // 尚未真正拖动，保持倍速
-      setRate(seq.video, seq.userRate);
-      TVG.Toast.hide();                                   // 撤掉常驻的"Nx 倍速"提示，否则会一直挂在画面上
-      seq.mode = null;
-      seq.engaged = false;
-      seq.sx = x;
-      seq.sy = y;
-      seq.baseTime = seq.video.currentTime;               // 长按期间视频在播，进度基准要重取
-      seq.baseVol = seq.video.muted ? 1 : seq.video.volume;
-      seq.baseBright = getBrightness(seq.video);
-      seq.moved = true;
-      return;                                             // 本帧只复位基准，下一帧按新基准判定
+      if (Math.hypot(dx, dy) >= c.moveThreshold && !seq.lpHinted) {
+        seq.lpHinted = true;
+        TVG.Toast.show('长按倍速中 · 松手后可拖动进度', false, 1200, seq.rect, seq.cont);
+      }
+      return;
     }
     if (!seq.mode) {
       if (Math.hypot(dx, dy) < c.moveThreshold) return;
@@ -365,7 +364,9 @@ TVG.Gestures = (function () {
   function onPointerMove(e) {
     if (!seq) return;
     var p = seq.pointers.get(e.pointerId);
-    if (!p || seq.done) return;
+    if (!p) return;
+    stopSite(e);          // 归属我们的指针：网站脚本不再收到其事件流
+    if (seq.done) return;
     p.x = e.clientX;
     p.y = e.clientY;
     if (seq.pointers.size === 1) {
@@ -404,8 +405,10 @@ TVG.Gestures = (function () {
   }
 
   function onPointerUp(e) {
+    if (e && e.__tvgSynthetic) return;   // 忽略我们派发的合成 cancel（否则会误清自己的序列）
     if (!seq) return;
     if (!seq.pointers.has(e.pointerId)) return;
+    stopSite(e);                         // 与 down/move 一致：切断事件流
     seq.pointers.delete(e.pointerId);
     clearTimeout(seq.lpTimer);
     if (seq.pointers.size === 0) {
@@ -441,24 +444,26 @@ TVG.Gestures = (function () {
 
   function onTouchStart(e) {
     liveTouches = (e.touches && e.touches.length) || 0;
+    var t0 = e.touches && e.touches[0];
+    var uiT = isUiTarget(e.target);
+    var hit0 = (t0 && !uiT) ? hitVideo(t0.clientX, t0.clientY) : null;
+    // 视频区域内的触摸由我们全权接管：立即切断网站脚本（它的长按/滑动逻辑不从
+    // 这个触摸起步）。tap 合成的 click 不受影响，网站点击交互保留。
+    if (hit0) stopSite(e);
     // 序列进行中，第二指落在同一视频上：吃掉默认行为（防页面滚动/缩放）
-    if (seq && seq.pointers.size >= 1 && e.touches.length >= 2 && e.cancelable && !isUiTarget(e.target)) {
-      var hit = hitVideo(e.touches[0].clientX, e.touches[0].clientY);
-      if (hit === seq.video) e.preventDefault();
+    if (seq && seq.pointers.size >= 1 && e.touches.length >= 2 && e.cancelable && hit0) {
+      if (hit0 === seq.video) e.preventDefault();
       return;
     }
     // 非全屏时，触点落在中间全屏带：临时锁住容器的 pan-y，
     // 保证纵向滑动的前几帧不被浏览器当作页面滚动抢走（起手即锁定，松手还原）
     if (!seq && e.touches.length === 1 && cfg().fsGesture && !fsNow()) {
-      if (isUiTarget(e.target)) return;
-      var t = e.touches[0];
-      var v = hitVideo(t.clientX, t.clientY);
-      if (!v) return;
-      var cont = TVG.Locator.containerFor(v);
+      if (uiT || !hit0) return;
+      var cont = TVG.Locator.containerFor(hit0);
       if (!cont) return;
       var r = cont.getBoundingClientRect();
       if (r.width <= 0) return;
-      var rel = (t.clientX - r.left) / r.width;
+      var rel = (t0.clientX - r.left) / r.width;
       var half = clamp(cfg().fsEdgePercent || 0, 0, 80) / 200;
       if (rel >= 0.5 - half && rel <= 0.5 + half) {
         cont.classList.add('tvg-grab');
@@ -475,8 +480,43 @@ TVG.Gestures = (function () {
     }
   }
 
+  // ===== 与网站脚本的事件隔离 =====
+  // 目标：视频区域内的触摸由我们全权处理 —— 网站脚本收不到该触摸的
+  // pointer/touch 事件流（它的长按、滑动、拖动逻辑不会跟着同时响应）。
+  // 注意：只有"事件流"被切断；tap 合成的 click 照常派发给网站，
+  // 网站正常的点击交互（显示控制条等）不受影响。
+  function stopSite(e) {
+    if (e && e.stopPropagation) e.stopPropagation();
+  }
+
+  // 长按生效时向网站派发合成 cancel：规范实现的播放器库（Video.js 等）收到
+  // pointercancel/touchcancel 会中止自己正在进行的手势 —— 这是压制"长按触发
+  // 网站自有手势"的第二条路径（第一条是 stopSite 切断事件流）。
+  // 合成事件带 __tvgSynthetic 标记，我们自己的监听器据此忽略它（否则会误清序列）。
+  function notifySiteCancel() {
+    var t = seq && seq.target;
+    if (!t || typeof t.dispatchEvent !== 'function') return;
+    try {
+      var pe = new PointerEvent('pointercancel', {
+        bubbles: true, cancelable: true, composed: true,
+        pointerId: seq.firstId || 1, pointerType: seq.ptype || 'touch',
+        isPrimary: true, clientX: seq.sx, clientY: seq.sy
+      });
+      pe.__tvgSynthetic = true;
+      t.dispatchEvent(pe);
+    } catch (e1) {}
+    try {
+      // 兼容以 Touch 事件工作库：非 TouchEvent 构造，但补齐 touches 类属性
+      var te = new Event('touchcancel', { bubbles: true, cancelable: true });
+      te.touches = []; te.targetTouches = []; te.changedTouches = [];
+      te.__tvgSynthetic = true;
+      t.dispatchEvent(te);
+    } catch (e2) {}
+  }
+
   function onTouchMove(e) {
     liveTouches = (e.touches && e.touches.length) || 0;
+    if (seq) stopSite(e);   // 我们接管的触摸：网站脚本不再收到其事件流
     // 与 pointermove 走同一条处理路径：单指时把 touchmove 也喂给统一处理函数。
     // Android 上 touch 事件最可靠；pointer 事件在个别环境可能丢失——
     // 双通道同时到达时处理天然幂等，丢任何一路手势都完整。
@@ -489,6 +529,8 @@ TVG.Gestures = (function () {
 
   // touch 计数维护：isPrimary 不可用的环境（老内核）用它兜底判断当前有几指按着
   function onTouchCount(e) {
+    if (e && e.__tvgSynthetic) return;   // 忽略合成 cancel
+    if (seq) stopSite(e);                // 与 down/move 保持一致
     liveTouches = (e.touches && e.touches.length) || 0;
   }
 
@@ -508,7 +550,13 @@ TVG.Gestures = (function () {
   }
 
   function onContext(e) {
-    if (seq && seq.pointers.size > 0 && cfg().longPress4x) e.preventDefault();
+    // 屏蔽长按系统菜单（Android 长按 video 的媒体菜单、文本选择等）：
+    //   ① 触摸序列进行中（含长按 2x 生效期间）
+    //   ② 无序列但长按点命中视频（边界兜底）
+    if (!cfg().longPress4x) return;
+    if (seq && seq.pointers.size > 0) { if (e.cancelable) e.preventDefault(); return; }
+    var v = hitVideo(e.clientX, e.clientY);
+    if (v && e.cancelable) e.preventDefault();
   }
 
   // 屏蔽站点/浏览器自带的"双击进全屏"——网页里双击往往同时被浏览器当作
