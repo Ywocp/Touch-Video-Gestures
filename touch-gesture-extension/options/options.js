@@ -48,7 +48,7 @@ var SECTIONS = [
       { key: 'progress', type: 'bool', label: '启用进度手势' },
       { key: 'seekMaxPercent', type: 'range', min: 5, max: 100, step: 5, unit: '%', label: '进度强度', hint: '滑满半屏宽跳转的最大百分比' },
       { key: 'seekStartGain', type: 'range', min: 10, max: 100, step: 5, unit: '%', label: '起步速率', hint: '拖动起步阶段的响应快慢：越大起步越灵敏（100% = 完全线性）；越小越稳但起步越缓' },
-      { key: 'seekCurve', type: 'range', min: 1, max: 6, step: 0.05, label: '曲线指数', hint: '后段加速程度：数值越大，拖动后段加速越明显（长视频跳转更省距离）；起步快慢由「起步速率」控制' },
+      { key: 'seekCurve', type: 'range', min: 1, max: 6, step: 0.5, label: '曲线指数', hint: '后段加速程度：数值越大，拖动后段加速越明显（长视频跳转更省距离）；起步快慢由「起步速率」控制' },
       { key: 'seekRealtime', type: 'bool', label: '拖动时实时跳转', hint: '关闭（默认）＝拖动时只预览目标时间，松手才真正跳转，避免网络视频反复缓冲卡顿；开启＝拖动过程中画面实时跟随' },
       { type: 'curve' }
     ]
@@ -97,7 +97,7 @@ var SECTIONS = [
     title: '显示与全屏',
     fields: [
       { key: 'orientationLock', type: 'bool', label: '全屏宽视频锁定横屏' },
-      { key: 'toastY', type: 'range', min: 5, max: 95, step: 5, unit: '%', label: '提示框位置', hint: '在视频高度中的百分比；放低时自动避让进度条' },
+      { key: 'toastY', type: 'range', min: 6, max: 96, step: 2, unit: '%', label: '提示框位置', hint: '在视频高度中的百分比；放低时自动避让进度条' },
       { key: 'toastFont', type: 'range', min: 6, max: 20, step: 1, unit: 'px', label: '提示框字号', hint: '基准字号，随视频大小自适应缩放（小视频上自动缩小，大屏上自动放大）' },
       { key: 'toastOpacity', type: 'range', min: 30, max: 100, step: 5, unit: '%', label: '提示框不透明度', hint: '数值越低越透明' },
       { key: 'toastMs', type: 'range', min: 500, max: 3000, step: 100, unit: 'ms', label: '提示框停留时长' },
