@@ -204,14 +204,22 @@ TVG.Gestures = (function () {
 
     if (c.longPress4x) {
       seq.lpTimer = setTimeout(function () {
-        // 长按判定：仅当手指未移动时生效（与拖动进度互斥，避免冲突）
-        if (seq && seq.pointers.size === 1 && !seq.moved) {
-          var rate = c.longPressRate || 4;
-          seq.mode = 'longpress';
-          seq.engaged = true;
-          setRate(seq.video, rate);
-          TVG.Toast.show(rate + 'x 倍速（松开恢复）', true, 0, seq.rect, seq.cont);
-        }
+        if (!seq || seq.pointers.size !== 1) return;
+        var q = null;
+        seq.pointers.forEach(function (z) { if (!q) q = z; });
+        // 长按判定：必须确实没动过。双重保险 ——
+        //   ① seq.moved 标志（pointermove 或 touchmove 任一到达都会置位）
+        //   ② 直接用最后记录的触点位置复核位移
+        // 只靠 ① 的风险：个别环境（模拟器/触控笔/合成事件）下 pointermove 可能
+        // 送不到，moved 永远为 false，长按就会在用户拖动过程中误触发，
+        // 表现为"拖动进度时同时冒出倍速"。
+        if (!q || seq.moved) return;
+        if (Math.hypot(q.x - seq.sx, q.y - seq.sy) > 8) return;
+        var rate = c.longPressRate || 4;
+        seq.mode = 'longpress';
+        seq.engaged = true;
+        setRate(seq.video, rate);
+        TVG.Toast.show(rate + 'x 倍速（松开恢复）', true, 0, seq.rect, seq.cont);
       }, c.longPressMs);
     }
   }
@@ -276,6 +284,7 @@ TVG.Gestures = (function () {
       if (seq.mode === 'longpress') {
         if (Math.hypot(dx, dy) < c.moveThreshold) return;   // 尚未真正拖动，保持倍速
         setRate(seq.video, seq.userRate);
+        TVG.Toast.hide();                                   // 撤掉常驻的"Nx 倍速"提示，否则会一直挂在画面上
         seq.mode = null;
         seq.engaged = false;
         seq.sx = e.clientX;
@@ -419,8 +428,36 @@ TVG.Gestures = (function () {
   }
 
   function onTouchMove(e) {
+    // 与 pointermove 双保险：单指有位移就取消长按判定，并刷新记录的触点位置。
+    // Android 上 touch 事件最可靠，用它兜住 pointer 事件可能丢失的情况
+    // （否则长按会在拖动过程中误触发，见 lpTimer 里的说明）。
+    if (seq && seq.pointers.size === 1 && e.touches && e.touches.length === 1) {
+      var t = e.touches[0];
+      var mvx = t.clientX - seq.sx, mvy = t.clientY - seq.sy;
+      if (!seq.moved && Math.hypot(mvx, mvy) > 8) {
+        seq.moved = true;
+        clearTimeout(seq.lpTimer);
+      }
+      var q0 = null;
+      seq.pointers.forEach(function (z) { if (!q0) q0 = z; });
+      if (q0) { q0.x = t.clientX; q0.y = t.clientY; }
+    }
     // 手势锁定后拦截后续滚动；其余情况放行（页面正常滚动）
     if (seq && seq.engaged && e.cancelable) e.preventDefault();
+  }
+
+  // 页面失焦/切后台时兜底复位：这类情况 pointerup 可能收不到，
+  // 残留的 seq 会让下一次触摸被当成"第二根手指"→ 直接进 instant4x。
+  function resetSeq() {
+    if (!seq) return;
+    clearTimeout(seq.lpTimer);
+    clearTimeout(seq._seekTimer);
+    if (seq.mode === 'longpress' || seq.instant4x) {
+      try { setRate(seq.video, seq.userRate); } catch (e) {}
+    }
+    TVG.Toast.hide();
+    releaseGrab();
+    seq = null;
   }
 
   function onContext(e) {
@@ -652,6 +689,8 @@ TVG.Gestures = (function () {
     document.addEventListener('dblclick', onDblClick, true);
     // 全屏状态变化 → 更新容器的 touch-action 策略
     document.addEventListener('fullscreenchange', updateFsClass, true);
+    document.addEventListener('visibilitychange', function () { if (document.hidden) resetSeq(); }, true);
+    window.addEventListener('blur', resetSeq, true);
     window.addEventListener('resize', updateFsClass, true);
 
     // 统计接口（popup 诊断用，仅顶层文档响应）
