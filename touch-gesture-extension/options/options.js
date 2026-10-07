@@ -3,7 +3,7 @@
 // ===== 默认值（与 content/tvg-core.js 保持一致）=====
 var DEFAULTS = {
   enabled: true,
-  progress: true, seekMaxPercent: 25, seekCurve: 3, seekRealtime: false,
+  progress: true, seekMaxPercent: 25, seekStartGain: 50, seekCurve: 3, seekRealtime: false,
   volume: true, brightness: true, volGain: 1.2, brightGain: 1.2,
   fsGesture: false, fsReverse: false, fsEdgePercent: 20, fsThreshold: 40, blockDblFs: false,
   speed: true, speedStep: 0.25, instant4x: true, longPress4x: true, longPressMs: 500, longPressRate: 2,
@@ -47,7 +47,8 @@ var SECTIONS = [
     fields: [
       { key: 'progress', type: 'bool', label: '启用进度手势' },
       { key: 'seekMaxPercent', type: 'range', min: 5, max: 100, step: 5, unit: '%', label: '进度强度', hint: '滑满半屏宽跳转的最大百分比' },
-      { key: 'seekCurve', type: 'range', min: 1, max: 6, step: 0.05, label: '曲线指数', hint: '后段加速程度：1 = 线性（起步最稳）；数值越大，拖动后段加速越明显（长视频跳转更省距离）' },
+      { key: 'seekStartGain', type: 'range', min: 10, max: 100, step: 5, unit: '%', label: '起步速率', hint: '拖动起步阶段的响应快慢：越大起步越灵敏（100% = 完全线性）；越小越稳但起步越缓' },
+      { key: 'seekCurve', type: 'range', min: 1, max: 6, step: 0.05, label: '曲线指数', hint: '后段加速程度：数值越大，拖动后段加速越明显（长视频跳转更省距离）；起步快慢由「起步速率」控制' },
       { key: 'seekRealtime', type: 'bool', label: '拖动时实时跳转', hint: '关闭（默认）＝拖动时只预览目标时间，松手才真正跳转，避免网络视频反复缓冲卡顿；开启＝拖动过程中画面实时跟随' },
       { type: 'curve' }
     ]
@@ -291,18 +292,19 @@ function updateCurve() {
   var path = document.getElementById('curvePath');
   if (!path) return;
   var maxP = cfg.seekMaxPercent, curve = cfg.seekCurve;
+  var w = (cfg.seekStartGain == null ? 50 : cfg.seekStartGain) / 100;
   var pts = [];
   for (var i = 0; i <= 40; i++) {
     var x = i / 40;                       // 0~1：滑动距离 / 半屏宽
-    var y = (0.5 * x + 0.5 * Math.pow(x, curve)) * maxP;  // 跳转百分比（与 seekTo 响应一致）
+    var y = (w * x + (1 - w) * Math.pow(x, curve)) * maxP;  // 跳转百分比（与 seekTo 响应一致）
     var px = 40 + x * 345;
     var py = 150 - (y / 100) * 130;
     pts.push(px.toFixed(1) + ',' + py.toFixed(1));
   }
   path.setAttribute('d', 'M' + pts.join(' L'));
 
-  var q = (0.5 * 0.25 + 0.5 * Math.pow(0.25, curve)) * maxP;
-  var h = (0.5 * 0.5 + 0.5 * Math.pow(0.5, curve)) * maxP;
+  var q = (w * 0.25 + (1 - w) * Math.pow(0.25, curve)) * maxP;
+  var h = (w * 0.5 + (1 - w) * Math.pow(0.5, curve)) * maxP;
   var line = document.getElementById('curveLine');
   if (line) {
     var qx = 40 + 0.25 * 345;
@@ -413,7 +415,7 @@ var saveTimer = null;
 function set(key, value) {
   cfg[key] = value;
   if (els[key] && els[key].range) els[key].val.textContent = value + els[key].unit;
-  if (key === 'seekMaxPercent' || key === 'seekCurve') updateCurve();
+  if (key === 'seekMaxPercent' || key === 'seekStartGain' || key === 'seekCurve') updateCurve();
   clearTimeout(saveTimer);
   saveTimer = setTimeout(function () {
     store.set({ cfg: cfg }).then(flashTip);
