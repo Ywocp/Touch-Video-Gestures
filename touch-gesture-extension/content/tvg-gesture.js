@@ -33,6 +33,11 @@ TVG.Gestures = (function () {
   var liveTouches = 0;        // 当前按在屏幕上的触点数（touchstart/touchend 维护，多指判定兜底）
   var inited = false;
 
+  // 滑动一票否决阈值（px）：本次触摸的位移一旦达到它，就认定"这是滑动手势"，
+  // 长按资格永久作废 —— 不是"长按触发后再退出"，而是从源头保证长按绝不发生。
+  // 取 5px：大于长按时的自然微抖（1~3px），小于旧容差 8px（拖动起步的常见位移会落在 5~8px 之间）。
+  var SLIDE_PX = 5;
+
   function cfg() { return TVG.Settings || TVG.DEFAULTS; }
 
   // 关键修复：不能只看类名就放行——Plyr/Pornhub 等播放器的"中央大播放按钮"
@@ -180,7 +185,7 @@ TVG.Gestures = (function () {
       done: false,
       instant4x: false,
       speedAdjusted: false, // 本次序列是否真调过倍速（双指 speed 拖动）；没调过才在松手时恢复原速
-      moved: false,      // 本次触摸是否已产生位移（位移即取消长按判定）
+      moved: false,      // 本次触摸是否已滑动（位移 ≥SLIDE_PX）——一票否决长按，永久生效
       fsDone: false,     // 全屏切换是否已触发（锁定，防抖动反复切换）
       sx: e.clientX,
       sy: e.clientY,
@@ -211,14 +216,14 @@ TVG.Gestures = (function () {
         if (!seq || seq.pointers.size !== 1) return;
         var q = null;
         seq.pointers.forEach(function (z) { if (!q) q = z; });
-        // 长按判定：必须确实没动过。双重保险 ——
-        //   ① seq.moved 标志（pointermove 或 touchmove 任一到达都会置位）
-        //   ② 直接用最后记录的触点位置复核位移
-        // 只靠 ① 的风险：个别环境（模拟器/触控笔/合成事件）下 pointermove 可能
-        // 送不到，moved 永远为 false，长按就会在用户拖动过程中误触发，
-        // 表现为"拖动进度时同时冒出倍速"。
+        // 长按判定：本次触摸必须"从未滑动过"。三重检查，任一失败即永久否决——
+        //   ① seq.moved 标志：任何移动事件（pointermove / touchmove）到位移 ≥SLIDE_PX 时置位，
+        //      置位即取消定时器；动态置位后这里的检查是兜底（防事件竞态）；
+        //   ② 用最后记录的触点位置复核位移（防个别环境 move 事件送不到）；
+        //   ③ 只要滑动迹象成立，就不再有任何"事后补救"的余地 —— 长按从不出现，
+        //      而不是"出现后再退出"（用户视角：拖动时绝不能闪出倍速）。
         if (!q || seq.moved) return;
-        if (Math.hypot(q.x - seq.sx, q.y - seq.sy) > 8) return;
+        if (Math.hypot(q.x - seq.sx, q.y - seq.sy) > SLIDE_PX) { seq.moved = true; return; }
         var rate = c.longPressRate || 4;
         seq.mode = 'longpress';
         seq.engaged = true;
@@ -295,8 +300,10 @@ TVG.Gestures = (function () {
     var q0 = null;
     seq.pointers.forEach(function (z) { if (!q0) q0 = z; });
     if (q0) { q0.x = x; q0.y = y; }
-    // 产生位移 → 取消长按判定（在拖动进度/滑动时绝不触发长按倍速）
-    if (!seq.moved && Math.hypot(dx, dy) > 8) {
+    // 滑动一票否决：位移达到 SLIDE_PX 即认定"本次触摸是滑动"，
+    // 长按资格永久作废（定时器立即取消，且 moved 标志让任何残余回调也不可能触发）。
+    // 拖动起步阶段的任何细微移动都会走到这里 —— 500ms 后绝无长按冒出的可能。
+    if (!seq.moved && Math.hypot(dx, dy) > SLIDE_PX) {
       seq.moved = true;
       clearTimeout(seq.lpTimer);
     }
