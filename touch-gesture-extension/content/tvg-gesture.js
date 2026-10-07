@@ -269,6 +269,23 @@ TVG.Gestures = (function () {
         seq.moved = true;
         clearTimeout(seq.lpTimer);
       }
+      // 长按倍速已生效后若手指开始拖动：立刻退出倍速，并把基准重置到当前位置，
+      // 交还给下面的手势判定。否则长按一旦先触发，seq.mode 已非空，
+      // 模式判定会被整个跳过 → 拖动被吞掉，只留下 2x 在跑
+      // （表现为"拖动进度时同步触发了倍速"）。
+      if (seq.mode === 'longpress') {
+        if (Math.hypot(dx, dy) < c.moveThreshold) return;   // 尚未真正拖动，保持倍速
+        setRate(seq.video, seq.userRate);
+        seq.mode = null;
+        seq.engaged = false;
+        seq.sx = e.clientX;
+        seq.sy = e.clientY;
+        seq.baseTime = seq.video.currentTime;               // 长按期间视频在播，进度基准要重取
+        seq.baseVol = seq.video.muted ? 1 : seq.video.volume;
+        seq.baseBright = getBrightness(seq.video);
+        seq.moved = true;
+        return;                                             // 本帧只复位基准，下一帧按新基准判定
+      }
       if (!seq.mode) {
         if (Math.hypot(dx, dy) < c.moveThreshold) return;
         if (Math.abs(dx) > Math.abs(dy) * 1.2 && c.progress) {
