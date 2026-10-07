@@ -85,7 +85,7 @@ var SECTIONS = [
   {
     title: '双击与触摸判定',
     fields: [
-      { key: 'doubleTapSeek', type: 'bool', label: '双击左/右侧快退快进', hint: '双击视频左 40% / 右 40% 区域，分别快退/快进' },
+      { key: 'doubleTapSeek', type: 'bool', label: '双击左/右侧快退快进', hint: '双击视频左 40% / 右 40% 区域分别快退/快进；触发时网站自身的双击动作会被抑制（中央区双击仍交给网页）' },
       { key: 'seekStep', type: 'range', min: 5, max: 60, step: 5, unit: 's', label: '双击步长' },
       { key: 'doubleTapMs', type: 'range', min: 200, max: 500, step: 25, unit: 'ms', label: '双击判定间隔' },
       { key: 'moveThreshold', type: 'range', min: 6, max: 30, step: 2, unit: 'px', label: '起手阈值', hint: '小于该位移视为点击，不算手势' },

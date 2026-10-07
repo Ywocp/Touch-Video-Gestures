@@ -9,6 +9,9 @@
 //      （成立瞬间切断 + 通知取消）——出口在 TVG.Bridge。
 //   4. 依赖方向：Session → Zone（注册表/全屏带/fsNow）、Session → Bridge
 //      （切断/合成取消/原生全屏/轻点转发）。加载顺序 zone → bridge → session。
+//   5. 双击快进快退 = 完整接管（v1.1.1）：左/右区双击的第二击切断 + 合成 cancel
+//      + 尾巴（touchend/click/dblclick）一次性抑制 —— 触发则纯扩展动作，网站
+//      的原生双击不再跟着响应；中区双击未触发 → 原样交给原生（不切断）。
 window.TVG = window.TVG || {};
 TVG.Gestures = (function () {
   'use strict';
@@ -28,6 +31,26 @@ TVG.Gestures = (function () {
   var liveTouches = 0;        // 当前按在屏幕上的触点数（touchstart/touchend 维护，多指判定兜底）
   var lastGestureEndAt = 0;   // 最近一次"手势成立"序列的结束时刻（尾巴 mouseup 的切断窗口）
   var inited = false;
+
+  // 双击快进快退"被消费"后的尾巴抑制（v1.1.1）：
+  // 网站的原生双击是它自己的 JS 识别（document/window 监听），元素覆盖挡不住 ——
+  // 必须在事件层完整接管：第二击的 pointerdown/up 切断 + 合成 cancel，浏览器随后
+  // 合成的 touchend / click / dblclick 也必须一并拦下（否则网站的 dblclick 或
+  // "两次点击"计数识别照样触发，出现"快进 + 网站双击动作"双执行）。
+  // 三个一次性开关各最多吃一个事件，800ms 兜底过期。
+  var tailUntil = 0;
+  var tailTouchEnd = false, tailClick = false, tailDbl = false;
+  function armTail() {
+    tailUntil = Date.now() + 800;
+    tailTouchEnd = tailClick = tailDbl = true;
+  }
+  function tailAlive() {
+    if (Date.now() > tailUntil) {
+      tailTouchEnd = tailClick = tailDbl = false;
+      return false;
+    }
+    return true;
+  }
 
   // 手势引擎是否应当工作：激活标志 + 用户总开关（状态在 core，副作用在这里）。
   // 与「监听器注册」解耦 —— 监听器在 document_start 就绪（事件隔离的注册顺序），
@@ -105,6 +128,9 @@ TVG.Gestures = (function () {
 
   function startSequence(e, v) {
     var c = cfg();
+    // 新的触摸开始：清掉上一轮双击遗留的尾巴开关（正常时序下尾巴事件已在本次
+    // 按下之前走完；清掉可防止极端情况下误伤后续交互）
+    tailTouchEnd = tailClick = tailDbl = false;
     var cont = TVG.Locator.containerFor(v) || v.parentElement || v;
     seq = {
       video: v,
@@ -145,7 +171,17 @@ TVG.Gestures = (function () {
       var rel = (e.clientX - seq.rect.left) / (seq.rect.width || 1);
       if (rel < 0.4) nudgeSeek(v, -c.seekStep, seq.rect, seq.cont);
       else if (rel > 0.6) nudgeSeek(v, c.seekStep, seq.rect, seq.cont);
-      seq.done = true; // 本次触摸视为已消费
+      else { seq.done = true; return; }   // 中区：未触发动作 → 完全交给原生（不切断）
+      // 左/右区被消费：完整接管这一击（v1.1.1）——
+      //   ① 切断本次 pointerdown（网站收不到第二击的按下）；
+      //   ② 派发合成 cancel（中止网站进行中的点击/双击识别）；
+      //   ③ 之后这一击的 move/up/click/dblclick 全部切断（engaged + 尾巴开关）。
+      // 效果：双击触发 = 纯扩展动作；未触发（中区）= 原样放行。
+      seq.done = true;
+      seq.engaged = true;
+      armTail();
+      stopSite(e);
+      notifySiteCancel(seq);
       return;
     }    lastTapMap.set(v, { t: now, x: e.clientX, y: e.clientY });
 
@@ -455,6 +491,11 @@ TVG.Gestures = (function () {
   function onTouchCount(e) {
     if (e && e.__tvgSynthetic) return;   // 忽略合成 cancel
     if (!isActive()) return;
+    // 双击尾巴：被消费双击的第二击 touchend（浏览器合成）——拦下（一次性）
+    if (tailTouchEnd && tailAlive()) {
+      tailTouchEnd = false;
+      stopSite(e);
+    }
     if (seq && seq.engaged) stopSite(e); // 手势成立后切断；点击路径放行
     liveTouches = (e.touches && e.touches.length) || 0;
   }
@@ -494,11 +535,29 @@ TVG.Gestures = (function () {
     }
   }
 
+  // 双击尾巴：被消费双击的第二击随后合成的 click —— 拦下（一次性）。
+  // 防网站的"两次点击"计数式双击识别（它们不看 dblclick 事件，数 click）。
+  function onTailClickCapture(e) {
+    if (!tailClick || !tailAlive()) return;
+    if (isUiTarget(e.target)) return;                    // 控件上的点击不误伤
+    if (!hitVideo(e.clientX, e.clientY)) return;         // 只吃视频上的尾巴
+    tailClick = false;
+    stopSite(e);
+  }
+
   // 屏蔽站点/浏览器自带的"双击进全屏"——网页里双击往往同时被浏览器当作
   // 全屏快捷键，导致我们的"双击左/右快退快进"被抢走或两个动作叠加。
   // 用 dblclick 的捕获阶段 + preventDefault 拦下（不阻断我们自己的指针逻辑）。
   function onDblClick(e) {
     if (!isActive()) return;
+    // 双击快进快退被消费后的尾巴：浏览器合成的 dblclick —— 拦下（一次性），
+    // 避免网站再触发一次它自己的双击动作（如双击全屏）；中区双击未消费 → 放行
+    if (tailDbl && tailAlive() && hitVideo(e.clientX, e.clientY) && !isUiTarget(e.target)) {
+      tailDbl = false;
+      if (e.cancelable) e.preventDefault();
+      stopSite(e);
+      return;
+    }
     if (!cfg().blockDblFs) return;
     var v = hitVideo(e.clientX, e.clientY);
     if (!v) return;
@@ -662,6 +721,8 @@ TVG.Gestures = (function () {
     window.addEventListener('dblclick', onDblClick, true);
     // 预置带轻点的"原生 click 抑制"（配合 forwardBandTap 补发正确目标的点击）
     window.addEventListener('click', TVG.Bridge.onClickCapture, true);
+    // 双击尾巴：被消费双击的第二击 click（防网站"两次点击"计数式双击识别）
+    window.addEventListener('click', onTailClickCapture, true);
     // 以下事件不属于竞争事件，按规范挂在对应对象上（全屏类名/预置带归 Zone 管）
     document.addEventListener('fullscreenchange', TVG.Zone.updateFsClass, true);
     document.addEventListener('visibilitychange', function () { if (document.hidden) resetSeq(); }, true);
