@@ -232,7 +232,7 @@ function buildRow(f) {
     rg.min = f.min; rg.max = f.max; rg.step = f.step;
     rg.addEventListener('input', function () { set(f.key, Number(rg.value)); });
     els[f.key] = { range: rg, val: val, unit: f.unit || '' };
-      row.appendChild(rg);
+    row.appendChild(rg);
     row.appendChild(val);
   } else if (f.type === 'toggle') {
     // 方向切换按钮：直接改 fsReverse，文案随状态变
@@ -294,7 +294,7 @@ function updateCurve() {
   var pts = [];
   for (var i = 0; i <= 40; i++) {
     var x = i / 40;                       // 0~1：滑动距离 / 半屏宽
-    var y = (0.5 * x + 0.5 * Math.pow(x, curve)) * maxP;  // 跳转百分比（与 seekTo 一致）
+    var y = (0.5 * x + 0.5 * Math.pow(x, curve)) * maxP;  // 跳转百分比（与 seekTo 响应一致）
     var px = 40 + x * 345;
     var py = 150 - (y / 100) * 130;
     pts.push(px.toFixed(1) + ',' + py.toFixed(1));
