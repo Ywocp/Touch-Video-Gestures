@@ -55,7 +55,7 @@ var SECTIONS = [
   {
     title: '全屏切换手势（单指纵向，中间窄带）',
     fields: [
-      { key: 'fsGesture', type: 'bool', label: '启用全屏切换手势', hint: '默认关闭（纵向滑动优先页面滚动）；开启后视频中间区域下滑进全屏、上滑退出' },
+      { key: 'fsGesture', type: 'bool', label: '启用全屏切换手势', hint: '默认关闭；开启后视频中央窄带内纵向滑动从第一帧即归脚本（浏览器下拉刷新不再抢占）：下滑进全屏、上滑退出（非全屏时上滑＝滚动页面）；窄带以外不接管' },
       { key: 'fsReverse', type: 'toggle', label: '手势方向', hint: '点按钮即时切换，无需保存' },
       { key: 'fsEdgePercent', type: 'range', min: 10, max: 60, step: 2, unit: '%', label: '中间窄带宽度', hint: '占视频宽度比例；左右两侧按剩余宽度均分（左亮度 / 右音量）' },
       { key: 'fsThreshold', type: 'range', min: 20, max: 120, step: 5, unit: 'px', label: '触发位移阈值', hint: '纵向滑动超过该距离才切换，防止误触' },

@@ -7,6 +7,9 @@
 //      天然支持同页多视频：点到哪个就操作哪个。
 //   3. 事件隔离采「观察-切断」策略：点击归网站（观察期完整放行）、手势归我们
 //      （成立瞬间切断 + 通知取消）——详见下方「与网站脚本的事件隔离」。
+//   4. 中央全屏带（v1.0.8）：窄带做成"预置"的真实元素（自带 touch-action:none）。
+//      动态加类对进行中的触摸无效（touch-action 在触摸开始时求值），预置才能
+//      从第一帧就夺走浏览器的滚动/下拉刷新资格——其余区域不预置、不接管。
 window.TVG = window.TVG || {};
 TVG.Gestures = (function () {
   'use strict';
@@ -44,6 +47,7 @@ TVG.Gestures = (function () {
   function setActive(v) {
     live = !!v;
     if (!live) resetSeq();     // 从工作态切到停用：复位进行中的手势（恢复倍速/清除提示）
+    refreshBands();            // 启停 / 设置变化时同步中央全屏带
   }
 
   // 滑动一票否决阈值（px）：本次触摸的位移一旦达到它，就认定"这是滑动手势"，
@@ -129,11 +133,65 @@ TVG.Gestures = (function () {
       if (fs) c.classList.add('tvg-fs');
       else c.classList.remove('tvg-fs');
     }
+    refreshBands();   // 全屏切换 → 中央全屏带同步隐藏 / 恢复
   }
 
   // 全屏状态（供手势 regionOf 使用；iframe 内全屏 standard API 为 null，用视口回退）
   function fsNow() {
     return !!document.fullscreenElement || viewportIsScreen();
+  }
+
+  // ===== 中央全屏带：预置抓取层（v1.0.8）=====
+  // 为什么必须"预置"：touch-action 在触摸开始时就被浏览器求值并锁定——进入
+  // touchstart 处理器之后再加类（旧 .tvg-grab 方案）对"已经开始的那次触摸"
+  // 无效，顶页下滑时浏览器照样拿手势去触发下拉刷新（用户实测）。
+  // 因此把中央窄带做成一个自带 touch-action:none 的真实元素，常驻在视频容器里：
+  //   · 触摸落在它上面 → 浏览器从第一帧起就没有滚动 / 下拉刷新资格，纵向滑动
+  //     全程归脚本（下滑进全屏不再被浏览器抢走）；
+  //   · 窄带以外的区域不预置、不接管，浏览器行为（页面滚动等）完全照旧；
+  //   · 全屏时移除（容器已挂 .tvg-fs = touch-action:none，无需此层）；
+  //   · 纵向留出容器底部一段（避开控制条）：控件照常命中、照常可用。
+  function ensureBand(e) {
+    var half = clamp(cfg().fsEdgePercent || 0, 0, 80) / 200; // 窄带半宽（0~0.4）
+    var want = !!(isActive() && cfg().fsGesture && half > 0.02 && !fsNow());
+    var b = e.band;
+    if (!want) {
+      if (b && b.parentNode) {
+        try { b.parentNode.removeChild(b); } catch (err) {}
+      }
+      e.band = null;
+      return;
+    }
+    if (!b || !b.isConnected) {
+      b = document.createElement('div');
+      b.className = 'tvg-band';
+      b.setAttribute('aria-hidden', 'true');
+      e.band = b;
+    }
+    if (b.parentNode !== e.c) {
+      // 容器多为已定位的播放器外壳；个别是 static —— 注入 relative 作定位基准
+      try {
+        var pos = window.getComputedStyle ? getComputedStyle(e.c).position : '';
+        if (pos === 'static') e.c.style.position = 'relative';
+      } catch (err2) {}
+      try { e.c.appendChild(b); } catch (err3) {}
+    }
+    // 取 0.1% 精度，避免浮点尘埃进入样式字符串
+    var left = Math.round((0.5 - half) * 1000) / 10;
+    var width = Math.round(half * 2 * 1000) / 10;
+    b.style.left = left + '%';
+    b.style.width = width + '%';
+  }
+
+  function refreshBands() {
+    for (var i = 0; i < registry.length; i++) ensureBand(registry[i]);
+  }
+
+  function bandFor(video) {
+    for (var i = 0; i < registry.length; i++) {
+      if (registry[i].v === video) return registry[i].band || null;
+    }
+    return null;
   }
 
   // 纵向滑动的区域判定（参照 PiliPlus 三区，但改为按百分比可调）：
@@ -370,7 +428,7 @@ TVG.Gestures = (function () {
     if (seq.mode === 'seek') seekTo(seq, dx);
     else if (seq.mode === 'volume') setVolumeRel(seq, dy);
     else if (seq.mode === 'brightness') setBrightnessRel(seq, dy);
-    else if (seq.mode === 'fs') fsSwipe(seq, dy);
+    else if (seq.mode === 'fs') fsSwipe(seq, dy, y);
   }
 
   function onPointerMove(e) {
@@ -477,8 +535,10 @@ TVG.Gestures = (function () {
       }
       return;
     }
-    // 非全屏时，触点落在中间全屏带：临时锁住容器的 pan-y，
-    // 保证纵向滑动的前几帧不被浏览器当作页面滚动抢走（起手即锁定，松手还原）
+    // 非全屏时，触点落在中间全屏带：临时锁住容器的 pan-y。
+    // v1.0.8 起主机制是"预置带"（.tvg-band，见 ensureBand）——这里保留为
+    // 兜底：当预置带未能命中（如站点自有覆盖层压在其上）时，仍尽力锁住
+    // 容器的 pan-y，让纵向滑动的后续帧不再被浏览器当作页面滚动消费。
     if (!seq && e.touches.length === 1 && cfg().fsGesture && !fsNow()) {
       if (uiT || !hit0) return;
       var cont = TVG.Locator.containerFor(hit0);
@@ -726,19 +786,28 @@ TVG.Gestures = (function () {
   // 中间窄带纵向滑动 → 全屏切换
   // 方向（默认）：下滑进全屏、上滑退出；c.fsReverse 反转
   // 位移越过 fsThreshold 后立即触发一次并锁定（fsDone），避免来回抖动反复切换
-  function fsSwipe(s, dy) {
+  function fsSwipe(s, dy, y) {
     var c = cfg();
     var th = c.fsThreshold || 40;
     if (s.fsDone) return;
+    var down = dy > 0;                          // 下滑
+    var wantEnter = c.fsReverse ? !down : down; // 是否需要"进入全屏"
+    // 非全屏 + "退出"方向：此刻没有全屏可退 —— 预置带已拿走浏览器的滚动资格，
+    // 这里手工补偿为页面滚动（scrollBy 跟手），避免"窄带里滑不动页面"。
+    // 反向再滑回（变回"进入"方向）依然可以正常触发全屏。
+    if (!fsNow() && !wantEnter) {
+      var last = (s.fsScrollLast == null) ? (y - dy) : s.fsScrollLast;
+      var step = y - last;
+      s.fsScrollLast = y;
+      if (step) { try { window.scrollBy(0, -step); } catch (e) {} }
+      return;
+    }
     if (Math.abs(dy) < th) {
       // 未过阈值：给方向性提示，明确"还要滑多少"
-      var need = c.fsReverse ? (dy < 0 ? '下滑进全屏' : '上滑退出全屏')
-                             : (dy > 0 ? '下滑进全屏' : '上滑退出全屏');
+      var need = wantEnter ? '下滑进全屏' : '上滑退出全屏';
       TVG.Toast.show(need + ' · ' + Math.abs(Math.round(dy)) + '/' + th, false, 0, s.rect, s.cont);
       return;
     }
-    var down = dy > 0;                       // 下滑
-    var wantEnter = c.fsReverse ? !down : down; // 是否需要"进入全屏"
     var isFs = fsNow();
     var act = wantEnter ? 'enter' : 'exit';
     // 已在目标状态时不再重复触发（如已全屏还下滑"进全屏"）
@@ -778,10 +847,10 @@ TVG.Gestures = (function () {
           return false;
         }
       }
-    registry.push({ v: video, c: cont });
+    registry.push({ v: video, c: cont, band: null });
     // touch-action: pan-y —— 纵向原生滚动保留，横向交给手势
     cont.setAttribute('data-tvg-container', '');
-    updateFsClass();
+    updateFsClass();   // 内含 refreshBands：按当前设置同步中央全屏带
     lastReject = '';
       // 首个视频注册时给一次性提示（可在设置关闭），便于确认引擎已工作。
       // 带版本号：用户一眼能确认页面里跑的是哪一版内容脚本——
@@ -812,7 +881,13 @@ TVG.Gestures = (function () {
 
   function prune() {
     for (var i = registry.length - 1; i >= 0; i--) {
-      if (!registry[i].v.isConnected) registry.splice(i, 1);
+      if (!registry[i].v.isConnected) {
+        var b = registry[i].band;
+        if (b && b.parentNode) {
+          try { b.parentNode.removeChild(b); } catch (e) {}
+        }
+        registry.splice(i, 1);
+      }
     }
   }
 
@@ -899,6 +974,8 @@ TVG.Gestures = (function () {
     prune: prune,
     count: function () { prune(); return registry.length; },
     refreshFullscreen: updateFsClass,
+    refreshBands: refreshBands,
+    bandFor: bandFor,
     setActive: setActive,
     init: init
   };
