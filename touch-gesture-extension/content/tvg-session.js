@@ -149,7 +149,6 @@ TVG.Gestures = (function () {
       instant4x: false,
       speedAdjusted: false, // 本次序列是否真调过倍速（双指 speed 拖动）；没调过才在松手时恢复原速
       moved: false,      // 本次触摸是否已滑动（位移 ≥SLIDE_PX）——一票否决长按，永久生效
-      lpHinted: false,   // 长按锁定后是否已提示过"松手后可拖动"
       fsDone: false,     // 全屏切换是否已触发（锁定，防抖动反复切换）
       sx: e.clientX,
       sy: e.clientY,
@@ -202,7 +201,7 @@ TVG.Gestures = (function () {
         seq.engaged = true;
         setRate(seq.video, rate);
         notifySiteCancel(seq);   // 向网站派发 cancel：中止它自己可能正在进行的手势/长按
-        TVG.Toast.show(rate + 'x 倍速（松开恢复）', true, 0, seq.rect, seq.cont);
+        TVG.Toast.show(rate + 'x 倍速', true, 0, seq.rect, seq.cont);
       }, c.longPressMs);
     }
   }
@@ -287,14 +286,8 @@ TVG.Gestures = (function () {
     // 赢家锁定（对标 PiliPlus 的手势仲裁：赢家通吃）——长按已生效，本次触摸
     // 就锁定为长按：移动不再切换为拖动。旧设计"长按后拖动再接管"让一个触摸
     // 串了两个动作，正是"长按倍速的同时又滑动了进度条"的根源。
-    // 只提醒一次如何真正拖动（松手重按），避免用户困惑。
-    if (seq.mode === 'longpress') {
-      if (Math.hypot(dx, dy) >= c.moveThreshold && !seq.lpHinted) {
-        seq.lpHinted = true;
-        TVG.Toast.show('长按倍速中 · 松手后可拖动进度', false, 1200, seq.rect, seq.cont);
-      }
-      return;
-    }
+    // 锁定期间不额外提示（倍速数字已在生效提示里，重复描述是冗余）。
+    if (seq.mode === 'longpress') return;
     if (!seq.mode) {
       if (Math.hypot(dx, dy) < c.moveThreshold) return;
       if (Math.abs(dx) > Math.abs(dy) * 1.2 && c.progress) {
@@ -593,10 +586,8 @@ TVG.Gestures = (function () {
           }
         }, 120);
       }
-      TVG.Toast.show(label, false, 0, s.rect, s.cont);
-    } else {
-      TVG.Toast.show(label + ' · 松手生效', false, 0, s.rect, s.cont);
     }
+    TVG.Toast.show(label, false, 0, s.rect, s.cont);
   }
 
   // 松手时提交进度跳转；返回实际落点，无待提交则返回 null。
@@ -675,9 +666,9 @@ TVG.Gestures = (function () {
       return;
     }
     if (Math.abs(dy) < th) {
-      // 未过阈值：给方向性提示，明确"还要滑多少"
+      // 未过阈值：只报方向意图（不带计数，保持简洁）
       var need = wantEnter ? '下滑进全屏' : '上滑退出全屏';
-      TVG.Toast.show(need + ' · ' + Math.abs(Math.round(dy)) + '/' + th, false, 0, s.rect, s.cont);
+      TVG.Toast.show(need, false, 0, s.rect, s.cont);
       return;
     }
     var isFs = fsNow();
@@ -691,7 +682,7 @@ TVG.Gestures = (function () {
     s.fsDone = true;
     var ok = TVG.Bridge.toggleFullscreen(s, act === 'enter');
     TVG.Toast.show(
-      ok ? (act === 'enter' ? '进入全屏' : '退出全屏') : '本站不支持手势全屏',
+      ok ? (act === 'enter' ? '进入全屏' : '退出全屏') : '本站不支持全屏',
       false, ok ? 800 : 1500, s.rect, s.cont);
   }
 
