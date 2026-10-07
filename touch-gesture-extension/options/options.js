@@ -338,7 +338,11 @@ function paintSite() {
   siteCb.disabled = !known;
   siteCb.checked = known ? isSiteEnabled() : true;
   var el = document.getElementById('siteHostName');
-  if (el) el.textContent = known ? siteHost : '未识别到网页，请从工具栏图标打开本页';
+  if (el) {
+    el.textContent = known
+      ? siteHost + '（关闭即把该域名加入禁用列表）'
+      : '未识别到网页，请从工具栏图标打开本页';
+  }
 }
 
 function setSiteEnabled(on) {
