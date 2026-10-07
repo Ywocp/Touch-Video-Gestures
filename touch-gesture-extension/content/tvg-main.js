@@ -38,23 +38,23 @@
       var now = Date.now();
       while (!next.done) {
         var v = next.value;
-        if (!TVG.Gestures.has(v)) {
+        if (!TVG.Zone.has(v)) {
           if (v.clientWidth >= 120 && v.clientHeight >= 60) {
             // 可见视频：直接注册
-            try { TVG.Gestures.register(v); } catch (e) {}
+            try { TVG.Zone.register(v); } catch (e) {}
           } else {
             // 隐藏视频（可能是 canvas 渲染播放器）：每 5 秒最多尝试一次容器回退注册
             var last = Number(v.dataset.tvgHiddenRetry || 0);
             if (now - last > 5000) {
               v.dataset.tvgHiddenRetry = now;
-              try { TVG.Gestures.register(v); } catch (e) {}
+              try { TVG.Zone.register(v); } catch (e) {}
             }
           }
         }
         next = vs.next();
       }
       // 全屏状态可能随视口变化（伪全屏），每次扫描同步一次类名
-      try { TVG.Gestures.refreshFullscreen(); } catch (e) {}
+      try { TVG.Zone.updateFsClass(); } catch (e) {}
     }
     function scheduleScan() {
       clearTimeout(scanTimer);
@@ -85,7 +85,7 @@
     // 自检：若页面明明有视频却没接管成功，主动提示（便于定位问题层）
     setTimeout(function () {
       var raw = document.querySelectorAll('video').length;
-      var taken = TVG.Gestures.count();
+      var taken = TVG.Zone.count();
       if (taken === 0 && raw > 0) {
         try {
           TVG.Toast.show('TVG：发现 ' + raw + ' 个视频但未接管，点扩展图标看诊断', false, 4000);
