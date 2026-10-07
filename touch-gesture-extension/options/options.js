@@ -29,6 +29,12 @@ var SECTIONS = [
     ]
   },
   {
+    title: '禁用域名',
+    fields: [
+      { key: 'disabledSites', type: 'sites', label: '每行一个域名', hint: '例如 example.com，其子域一并禁用' }
+    ]
+  },
+  {
     title: '通用',
     fields: [
       { key: 'enabled', type: 'bool', label: '总开关', hint: '关闭后所有手势失效' }
@@ -93,12 +99,6 @@ var SECTIONS = [
       { key: 'toastOpacity', type: 'range', min: 30, max: 100, step: 5, unit: '%', label: '提示框不透明度', hint: '数值越低越透明' },
       { key: 'toastMs', type: 'range', min: 500, max: 3000, step: 100, unit: 'ms', label: '提示框停留时长' },
       { key: 'hintOnAttach', type: 'bool', label: '显示"手势已启用"提示', hint: '进入含视频的页面时提示一次，用于确认引擎工作' }
-    ]
-  },
-  {
-    title: '禁用域名',
-    fields: [
-      { key: 'disabledSites', type: 'sites', label: '每行一个域名', hint: '例如 example.com，其子域一并禁用' }
     ]
   }
 ];
