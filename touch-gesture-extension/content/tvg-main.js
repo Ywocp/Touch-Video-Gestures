@@ -1,21 +1,36 @@
 // 入口：读设置 → 启发式发现视频 → 注册到手势引擎；MutationObserver 持续监听
+// 注意：本脚本在 document_start 运行（manifest 的 run_at）——事件监听的注册必须
+// 抢在页面脚本之前（事件隔离 stopPropagation 生效的前提），而 DOM 相关的启动
+// 逻辑则等 storage 就绪后执行（届时文档通常已可访问）。
 (function () {
   'use strict';
   if (window.__TVG_INIT__) return;
   window.__TVG_INIT__ = true;
 
-  TVG.Storage.get().then(function (cfg) {
-    if (!cfg.enabled) return;
+  // ===== 第一步（同步，document_start）：注册全部事件监听 =====
+  // 此时尚不知道本域是否被禁用：先以「未激活」占位（不产生任何行为、
+  // 不拦截任何事件），等设置就绪后再激活。这样既保住了注册顺序，
+  // 又不会在禁用域名/总开关关闭时工作。
+  TVG.Gestures.init();
+  TVG.Gestures.setActive(false);
+
+  // 依据设置计算「当前是否应工作」，并同步到手势引擎
+  function applyActive(cfg) {
     var host = location.host || 'iframe';
     var disabled = (cfg.disabledSites || []).some(function (d) {
       return d && (host === d || host.endsWith('.' + d));
     });
-    if (disabled) return;
+    var active = !!cfg.enabled && !disabled;
+    TVG.Gestures.setActive(active);
+    return active;
+  }
 
+  // ===== 第二步（storage 就绪后）：激活 + 启动视频扫描 =====
+  TVG.Storage.get().then(function (cfg) {
     TVG.Settings = cfg;
+    if (!applyActive(cfg)) return;
 
-    // document 级捕获监听 + 触点几何路由（先于站点脚本收到事件）
-    TVG.Gestures.init();
+    var scanTimer = 0;   // 修复：此前未声明，严格模式下 scheduleScan 会抛 ReferenceError
 
     function scan() {
       var vs = TVG.Locator.videos(document);
@@ -47,7 +62,8 @@
     }
 
     // 换页/动态插入监听（替代原脚本 2 秒轮询）
-    new MutationObserver(scheduleScan).observe(document.documentElement, {
+    // document_start 早期 document.documentElement 可能尚不存在，退回 document
+    new MutationObserver(scheduleScan).observe(document.documentElement || document, {
       childList: true,
       subtree: true
     });
@@ -58,6 +74,10 @@
     document.addEventListener('durationchange', scheduleScan, true);
     addEventListener('resize', scheduleScan, true);
     document.addEventListener('fullscreenchange', scheduleScan, true);
+    // SPA 导航 / 往返缓存恢复（document_start 注入时页面还没解析完，这两类切换必须重扫）
+    document.addEventListener('DOMContentLoaded', scheduleScan, true);
+    addEventListener('popstate', scheduleScan, true);
+    addEventListener('pageshow', scheduleScan, true);
     // 定时兜底扫描：覆盖"无 DOM 变化 / shadow 边界内创建 / 事件不冒泡"等盲区
     setInterval(scan, 3000);
     scan();
@@ -93,6 +113,8 @@
       chrome.storage.onChanged.addListener(function (ch, areaName) {
         if (areaName === 'sync' && ch.cfg) {
           Object.assign(TVG.Settings, TVG.DEFAULTS, ch.cfg.newValue || {});
+          // 总开关 / 当前域禁用状态变化 → 即时启停（此前从禁用名单移除后需刷新页面）
+          applyActive(TVG.Settings);
         }
       });
     }

@@ -31,7 +31,18 @@ TVG.Gestures = (function () {
   var seq = null;             // 当前手势序列
   var fsGrab = null;          // 非全屏时临时锁定 pan-y 的容器（中间带起手）
   var liveTouches = 0;        // 当前按在屏幕上的触点数（touchstart/touchend 维护，多指判定兜底）
+  var mouseCaptured = false;  // 鼠标序列已被我们接管（mousedown 命中视频后，后续 move/up 一并切断）
+  var live = true;            // 是否激活（main.js 在 storage 就绪后按「总开关 + 域名禁用」设置）
   var inited = false;
+
+  // 手势引擎是否应当工作：激活标志 + 用户总开关。
+  // 与「监听器注册」解耦 —— 监听器在 document_start 就绪（保证事件隔离的注册顺序），
+  // 但在禁用域名/总开关关闭时不产生任何行为（不拦事件、不响应手势）。
+  function isActive() { return live && !!cfg().enabled; }
+  function setActive(v) {
+    live = !!v;
+    if (!live) resetSeq();     // 从工作态切到停用：复位进行中的手势（恢复倍速/清除提示）
+  }
 
   // 滑动一票否决阈值（px）：本次触摸的位移一旦达到它，就认定"这是滑动手势"，
   // 长按资格永久作废 —— 不是"长按触发后再退出"，而是从源头保证长按绝不发生。
@@ -238,6 +249,7 @@ TVG.Gestures = (function () {
   }
 
   function onPointerDown(e) {
+    if (!isActive()) return;
     var c = cfg();
     if (e.pointerType === 'mouse' && !c.mouseSupport) { releaseGrab(); return; }
     if (isUiTarget(e.target)) { releaseGrab(); return; }
@@ -362,6 +374,7 @@ TVG.Gestures = (function () {
   }
 
   function onPointerMove(e) {
+    if (!isActive()) return;
     if (!seq) return;
     var p = seq.pointers.get(e.pointerId);
     if (!p) return;
@@ -406,6 +419,7 @@ TVG.Gestures = (function () {
 
   function onPointerUp(e) {
     if (e && e.__tvgSynthetic) return;   // 忽略我们派发的合成 cancel（否则会误清自己的序列）
+    if (!isActive()) return;
     if (!seq) return;
     if (!seq.pointers.has(e.pointerId)) return;
     stopSite(e);                         // 与 down/move 一致：切断事件流
@@ -443,6 +457,7 @@ TVG.Gestures = (function () {
   }
 
   function onTouchStart(e) {
+    if (!isActive()) return;
     liveTouches = (e.touches && e.touches.length) || 0;
     var t0 = e.touches && e.touches[0];
     var uiT = isUiTarget(e.target);
@@ -482,11 +497,41 @@ TVG.Gestures = (function () {
 
   // ===== 与网站脚本的事件隔离 =====
   // 目标：视频区域内的触摸由我们全权处理 —— 网站脚本收不到该触摸的
-  // pointer/touch 事件流（它的长按、滑动、拖动逻辑不会跟着同时响应）。
-  // 注意：只有"事件流"被切断；tap 合成的 click 照常派发给网站，
-  // 网站正常的点击交互（显示控制条等）不受影响。
+  // pointer/touch/mouse 事件流（它的长按、滑动、拖动逻辑不会跟着同时响应）。
+  //   · 注册于 document_start → 我们是最先注册的 document 捕获监听：
+  //     即使网站监听注册在 document 捕获阶段，stopImmediatePropagation 也能
+  //     阻断其执行（后注册者不会收到）；
+  //   · pointer 与 touch 之外，mouse 家族同样拦截（桌面鼠标 + 移动端合成 mouse）；
+  //   · 只有"事件流"被切断；tap 合成的 click 照常派发给网站，
+  //     网站正常的点击交互（显示控制条等）不受影响。
   function stopSite(e) {
-    if (e && e.stopPropagation) e.stopPropagation();
+    if (!e) return;
+    if (e.stopImmediatePropagation) e.stopImmediatePropagation();
+    if (e.stopPropagation) e.stopPropagation();
+  }
+
+  // ---- mouse 家族拦截：桌面鼠标与「触摸合成的 mouse 事件」都要切断，
+  //      否则网站的 mousedown/mousemove/mouseup 监听仍会跟着响应 ----
+  function onMouseDown(e) {
+    if (!isActive()) return;
+    var v = hitVideo(e.clientX, e.clientY);
+    if (!v || isUiTarget(e.target)) return;   // 控件区域（如网站进度条）放行
+    mouseCaptured = true;
+    stopSite(e);
+  }
+  function onMouseMove(e) {
+    if (!isActive() || !mouseCaptured) return;
+    stopSite(e);
+  }
+  function onMouseUp(e) {
+    if (!isActive() || !mouseCaptured) return;
+    stopSite(e);
+    mouseCaptured = false;
+  }
+  function onAuxClick(e) {
+    if (!isActive()) return;
+    var v = hitVideo(e.clientX, e.clientY);
+    if (v && !isUiTarget(e.target)) stopSite(e);
   }
 
   // 长按生效时向网站派发合成 cancel：规范实现的播放器库（Video.js 等）收到
@@ -515,6 +560,7 @@ TVG.Gestures = (function () {
   }
 
   function onTouchMove(e) {
+    if (!isActive()) return;
     liveTouches = (e.touches && e.touches.length) || 0;
     if (seq) stopSite(e);   // 我们接管的触摸：网站脚本不再收到其事件流
     // 与 pointermove 走同一条处理路径：单指时把 touchmove 也喂给统一处理函数。
@@ -530,6 +576,7 @@ TVG.Gestures = (function () {
   // touch 计数维护：isPrimary 不可用的环境（老内核）用它兜底判断当前有几指按着
   function onTouchCount(e) {
     if (e && e.__tvgSynthetic) return;   // 忽略合成 cancel
+    if (!isActive()) return;
     if (seq) stopSite(e);                // 与 down/move 保持一致
     liveTouches = (e.touches && e.touches.length) || 0;
   }
@@ -537,6 +584,7 @@ TVG.Gestures = (function () {
   // 页面失焦/切后台时兜底复位：这类情况 pointerup 可能收不到，
   // 残留的 seq 会让下一次触摸被当成"第二根手指"→ 直接进 instant4x。
   function resetSeq() {
+    mouseCaptured = false;
     if (!seq) return;
     clearTimeout(seq.lpTimer);
     clearTimeout(seq._seekTimer);
@@ -553,6 +601,7 @@ TVG.Gestures = (function () {
     // 屏蔽长按系统菜单（Android 长按 video 的媒体菜单、文本选择等）：
     //   ① 触摸序列进行中（含长按 2x 生效期间）
     //   ② 无序列但长按点命中视频（边界兜底）
+    if (!isActive()) return;
     if (!cfg().longPress4x) return;
     if (seq && seq.pointers.size > 0) { if (e.cancelable) e.preventDefault(); return; }
     var v = hitVideo(e.clientX, e.clientY);
@@ -563,6 +612,7 @@ TVG.Gestures = (function () {
   // 全屏快捷键，导致我们的"双击左/右快退快进"被抢走或两个动作叠加。
   // 用 dblclick 的捕获阶段 + preventDefault 拦下（不阻断我们自己的指针逻辑）。
   function onDblClick(e) {
+    if (!isActive()) return;
     if (!cfg().blockDblFs) return;
     var v = hitVideo(e.clientX, e.clientY);
     if (!v) return;
@@ -778,11 +828,18 @@ TVG.Gestures = (function () {
   function init() {
     if (inited) return;
     inited = true;
-    // 全部 document 捕获阶段：先于站点脚本收到事件
+    // 全部 document 捕获阶段：先于站点脚本收到事件（配合 manifest 的
+    // run_at: document_start，我们是最早注册的 document 捕获监听 ——
+    // 这保证 stopSite 能阻断包括网站捕获级监听在内的所有后续监听器）
     document.addEventListener('pointerdown', onPointerDown, true);
     document.addEventListener('pointermove', onPointerMove, true);
     document.addEventListener('pointerup', onPointerUp, true);
     document.addEventListener('pointercancel', onPointerUp, true);
+    // mouse 家族：桌面鼠标与移动端合成 mouse 事件同样切断（网站仍在用它们）
+    document.addEventListener('mousedown', onMouseDown, true);
+    document.addEventListener('mousemove', onMouseMove, true);
+    document.addEventListener('mouseup', onMouseUp, true);
+    document.addEventListener('auxclick', onAuxClick, true);
     document.addEventListener('touchstart', onTouchStart, { capture: true, passive: false });
     document.addEventListener('touchmove', onTouchMove, { capture: true, passive: false });
     document.addEventListener('touchend', onTouchCount, { capture: true, passive: true });
@@ -828,6 +885,7 @@ TVG.Gestures = (function () {
     prune: prune,
     count: function () { prune(); return registry.length; },
     refreshFullscreen: updateFsClass,
+    setActive: setActive,
     init: init
   };
 })();
