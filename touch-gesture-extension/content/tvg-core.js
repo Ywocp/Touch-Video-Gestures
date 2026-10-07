@@ -13,7 +13,8 @@ window.TVG = (function () {
     // 进度（单指左右滑）
     progress: true,
     seekMaxPercent: 25,   // 滑满半屏宽跳转的最大百分比
-    seekCurve: 3,         // 非线性曲线指数，越大越平缓（小滑动更精准）
+    seekStartGain: 50,    // 起步速率（%）：拖动起步的线性响应权重，越大起步越灵敏（100=纯线性）
+    seekCurve: 3,         // 后段加速曲线指数，越大后段加速越明显（1=不加速）
     seekRealtime: false,  // 拖动时实时跳转？false=只预览、松手才加载（网络视频更顺）
 
     // 音量 / 亮度（仅全屏）

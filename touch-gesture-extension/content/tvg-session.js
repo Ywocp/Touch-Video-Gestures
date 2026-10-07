@@ -568,13 +568,14 @@ TVG.Gestures = (function () {
   function seekTo(s, dx) {
     var v = s.video;
     if (!isFinite(v.duration)) { TVG.Toast.show('直播流，无法调整进度', false, 0, s.rect, s.cont); return; }
-    // 响应曲线（v1.1.3）：起步即线性响应（操作直觉）+ 后段按曲线加速。
-    // 旧公式 x^curve 会在起步的一大段距离内几乎无响应（用户反馈"拖很远才开始调"）；
-    // 现：ratio = 0.5·x + 0.5·x^k —— 起步速率恒定（不受 k 影响），k 只决定后段加速；
-    // k=1 即纯线性。x 为 0~1：滑动距离 / 半屏宽。
+    // 响应曲线（v1.1.3/1.1.4）：起步即线性响应（操作直觉）+ 后段按曲线加速。
+    // ratio = w·x + (1-w)·x^k —— w 为起步速率（seekStartGain %，100 = 纯线性，
+    // 起步速率恒定、不受 k 影响）；k 只决定后段加速（k=1 即整体线性）。
+    // 旧公式 x^k 会在起步的一大段距离内几乎无响应（用户反馈"拖很远才开始调"）。
     var x = clamp(Math.abs(dx) / (s.rect.width * 0.5), 0, 1);
     var k = clamp(cfg().seekCurve || 1, 1, 6);
-    var ratio = 0.5 * x + 0.5 * Math.pow(x, k);
+    var w = clamp((cfg().seekStartGain == null ? 50 : cfg().seekStartGain) / 100, 0, 1);
+    var ratio = w * x + (1 - w) * Math.pow(x, k);
     var percent = ratio * cfg().seekMaxPercent;
     var sec = Math.sign(dx) * (percent / 100) * v.duration;
     var t = clamp(s.baseTime + sec, 0, v.duration - 0.1);
