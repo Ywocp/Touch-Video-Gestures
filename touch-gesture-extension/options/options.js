@@ -11,6 +11,7 @@ var DEFAULTS = {
   moveThreshold: 12,
   orientationLock: true, mouseSupport: true,
   toastY: 10, toastFont: 8, toastOpacity: 70, toastMs: 900, hintOnAttach: true,
+  overlayPass: false,
   disabledSites: []
 };
 
@@ -26,7 +27,8 @@ var SECTIONS = [
   {
     title: '通用',
     fields: [
-      { key: 'enabled', type: 'bool', label: '总开关', hint: '关闭后所有手势失效' }
+      { key: 'enabled', type: 'bool', label: '总开关', hint: '关闭后所有手势失效' },
+      { key: 'overlayPass', type: 'bool', label: '覆盖层广告穿透', hint: '开启后，盖在视频上的浮层广告不再接收触摸：手势直接作用于视频，也不会误触广告（广告照常显示、不隐藏不拦截，站点检测不到异常）；默认关闭' }
     ]
   },
   {
