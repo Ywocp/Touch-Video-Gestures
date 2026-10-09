@@ -88,7 +88,33 @@ TVG.Gestures = (function () {
     // 面积超过视口 12%，或 宽>70%视口 且 高>25%视口 → 是大面积覆盖层，不是控件
     if (r.width * r.height > 0.12 * vw * vh) return false;
     if (r.width > 0.7 * vw && r.height > 0.25 * vh) return false;
+    // 视频正中央的「大播放按钮」不算控件 —— 见 isCenterPlayButton
+    if (isCenterPlayButton(ui, r)) return false;
     return true;
+  }
+
+  // 「中央大播放按钮」排除表（v1.1.9，声明式：加播放器 = 加一行）
+  // Plyr 的 .plyr__control--overlaid、video.js 的 .vjs-big-play-button 这类按钮
+  // 名字里带 control / play，尺寸却只有几十像素（48×48 量级），恰好挂在视频的
+  // 几何中心 —— 面积启发式判不出它是"覆盖层"，于是被当成控件放行，结果是
+  // **视频正中心的长按 / 拖动 / 双击全部失效**（hanime1.me 实测：倍速完全没反应）。
+  // 它本质上是"视频的一部分"（点它 = 操作视频），必须接管。
+  // 接管 ≠ 抢点击：观察期内事件照常放行，点它照样能播放；只有手势成立才切断。
+  var CENTER_PLAY_UI = [
+    '.plyr__control--overlaid',
+    '.vjs-big-play-button',
+    '[class*="big-play" i]',
+    '[class*="bigplay" i]',
+    '[class*="play-large" i]'
+  ];
+
+  function isCenterPlayButton(ui, r) {
+    // 必须落在已接管的视频上：控制条上的同类按钮不在中心，不受影响
+    if (!hitVideo(r.left + r.width / 2, r.top + r.height / 2)) return false;
+    for (var i = 0; i < CENTER_PLAY_UI.length; i++) {
+      try { if (ui.matches && ui.matches(CENTER_PLAY_UI[i])) return true; } catch (e) {}
+    }
+    return false;
   }
 
   // 触点命中的视频：TVG.Zone.hitVideo（别名，见顶部模块边界）
