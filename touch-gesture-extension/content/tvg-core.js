@@ -1,7 +1,8 @@
 // TVG = Touch Video Gestures 命名空间 + 默认配置 + 共享工具
-// 模块结构（v1.1.0 重构，加载顺序：core → storage → ui → locator → zone → bridge → session → main）：
+// 模块结构（v1.1.0 重构，加载顺序：core → storage → ui → locator → zone → bridge → overlay → session → main）：
 //   · Zone    区域/注册中心：视频注册表、容器 touch-action、中央全屏带（预置抓取层）
 //   · Bridge  站点桥：与站点打交道的一切（全屏按钮、点击转发、事件切断/合成取消）
+//   · Overlay 覆盖层穿透（v1.1.7）：盖在视频上的浮层广告「看得见、碰不到」
 //   · Session 手势状态机：观察 → 仲裁 → 执行（window 捕获统一接收）
 window.TVG = (function () {
   'use strict';
@@ -55,6 +56,9 @@ window.TVG = (function () {
     toastOpacity: 70,     // 提示框不透明度（%，越低越透明）
     toastMs: 900,
     hintOnAttach: true,   // 页面首次接管视频时提示"手势已启用"
+
+    // 覆盖层（浮层广告）
+    overlayPass: false,   // 盖在视频上的浮层 iframe 不再接收触摸（广告照常显示，只是碰不到）
 
     // 禁用域名
     disabledSites: []
