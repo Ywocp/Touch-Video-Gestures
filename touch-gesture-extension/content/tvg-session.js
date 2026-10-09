@@ -12,6 +12,9 @@
 //   5. 双击快进快退 = 完整接管（v1.1.1）：左/右区双击的第二击切断 + 合成 cancel
 //      + 尾巴（touchend/click/dblclick）一次性抑制 —— 触发则纯扩展动作，网站
 //      的原生双击不再跟着响应；中区双击未触发 → 原样交给原生（不切断）。
+//   6. 跨帧手势转发（v1.1.6）：跨源覆盖层 iframe（如广告位）盖住视频时，子帧
+//      把触摸序列转发给父帧、父帧映射坐标后用合成事件驱动同一套状态机 ——
+//      轻点不干涉（广告照常可点），手势成立后回执子帧切断后续事件。
 window.TVG = window.TVG || {};
 TVG.Gestures = (function () {
   'use strict';
@@ -28,6 +31,9 @@ TVG.Gestures = (function () {
   var brightnessMap = new WeakMap();
   var lastTapMap = new WeakMap();
   var seq = null;             // 当前手势序列
+  var relay = null;           // 本帧作为子帧时的转发状态 { pid, cut, at }
+  var fwd = null;             // 中间帧的转发链状态 { pid, childWin }（嵌套 iframe 链）
+  var remote = null;          // 本帧接收的跨帧序列 { pid, clientPid, frame }
   var liveTouches = 0;        // 当前按在屏幕上的触点数（touchstart/touchend 维护，多指判定兜底）
   var lastGestureEndAt = 0;   // 最近一次"手势成立"序列的结束时刻（尾巴 mouseup 的切断窗口）
   var inited = false;
@@ -124,6 +130,140 @@ TVG.Gestures = (function () {
 
   // 站点原生全屏（findFsButton / toggleFullscreen）在 TVG.Bridge —— 见 tvg-bridge.js
 
+  // ===== 跨帧手势转发（v1.1.6）=====
+  // 场景：跨源覆盖层 iframe（如 Eporner 播放器中央的 300×250 广告位，常为嵌套
+  // iframe 链）恰好盖在视频上——触摸落进 iframe 后，事件在 iframe 文档里流转，
+  // 父页 window 监听收不到任何事件（跨源 iframe 的事件不冒泡到父页），该区域
+  // 长按/拖动全部失效。
+  // 做法：子帧（非顶层）一律把触摸序列 postMessage 给父帧；中间帧只做坐标映射
+  // 继续上转（支持嵌套链），由**顶层帧**统一裁决——落点映射回顶层视口后若命中
+  // 已注册视频，用"合成事件"驱动同一套序列状态机（长按/拖动/双击全复用）。
+  // 不看子帧自身有无视频（广告帧常带装饰性视频，但不是用户的主目标）。
+  // 不破坏站点交互：轻点不干涉（子帧内容照常收到原生事件，广告可正常点击）；
+  // 仅当手势成立后，顶层帧回执（relay-ack）沿链下传，各子帧从那一刻起切断
+  // 该触摸的后续事件。
+  function relayDown(e) {
+    if (relay && Date.now() - relay.at < 10000) return;   // 已有进行中的转发
+    relay = { pid: e.pointerId, cut: false, at: Date.now() };
+    try {
+      window.parent.postMessage({ tvg: 'relay', phase: 'down', pid: e.pointerId,
+        x: e.clientX, y: e.clientY, iw: innerWidth, ih: innerHeight }, '*');
+    } catch (err) {}
+  }
+
+  function relayMove(e) {
+    if (!relay || e.pointerId !== relay.pid) return;
+    if (relay.cut) stopSite(e);
+    try {
+      window.parent.postMessage({ tvg: 'relay', phase: 'move', pid: e.pointerId,
+        x: e.clientX, y: e.clientY }, '*');
+    } catch (err) {}
+  }
+
+  function relayUp(e) {
+    if (!relay || e.pointerId !== relay.pid) return;
+    if (relay.cut) stopSite(e);
+    try {
+      window.parent.postMessage({ tvg: 'relay', phase: 'up', pid: e.pointerId,
+        x: e.clientX, y: e.clientY }, '*');
+    } catch (err) {}
+    relay = null;
+  }
+
+  // 子帧收父帧回执：手势已成立，切断本帧该触摸的后续事件（防止广告跟着响应）；
+  // 中间帧则把回执继续向下传给转发链的子帧（嵌套链场景）。
+  function onRelayAck(ev) {
+    if (!ev || ev.source !== window.parent) return;
+    var d = ev.data;
+    if (!d || d.tvg !== 'relay-ack') return;
+    if (relay && d.pid === relay.pid && d.engaged) relay.cut = true;
+    if (fwd && d.pid === fwd.pid) {
+      try { fwd.childWin.postMessage({ tvg: 'relay-ack', pid: d.pid, engaged: d.engaged }, '*'); } catch (e) {}
+    }
+  }
+
+  // 父帧：把映射后的坐标包成"合成事件"，喂给现有处理器（复用全部序列逻辑）
+  function fakeEv(x, y, pid) {
+    var t = null;
+    try { t = document.elementFromPoint(x, y); } catch (e0) {}
+    return {
+      pointerType: 'touch', pointerId: pid, isPrimary: true,
+      clientX: x, clientY: y, target: t || null,
+      cancelable: false, preventDefault: function () {}
+    };
+  }
+
+  // 父帧：手势成立 → 回执子帧（一次性），子帧据此切断它那边的原生事件。
+  // 长按成立时没有任何后续 move，因此不能只在收到消息时回执 —— 由长按定时器
+  // 直接调用本函数补发（见 lpTimer）。
+  function remoteAck() {
+    if (!remote || !seq || !seq.remote || !seq.engaged || seq._remoteAck) return;
+    seq._remoteAck = true;
+    try { remote.source.postMessage({ tvg: 'relay-ack', pid: remote.clientPid, engaged: true }, '*'); } catch (e) {}
+  }
+
+  function onRelayMessage(ev) {
+    var d = ev.data;
+    if (!isActive() || !d || typeof d.x !== 'number') return;
+
+    // 找来源 iframe（进行中的序列优先用缓存，避免每次扫描）
+    var fr = (remote && remote.frame && remote.frame.contentWindow === ev.source && remote.frame.isConnected)
+      ? remote.frame : null;
+    if (!fr) {
+      var ifs = document.querySelectorAll('iframe');
+      for (var i = 0; i < ifs.length; i++) {
+        if (ifs[i].contentWindow === ev.source) { fr = ifs[i]; break; }
+      }
+    }
+    if (!fr) return;
+
+    var r = fr.getBoundingClientRect();
+    var kx = (d.iw > 0) ? (r.width / d.iw) : 1;
+    var ky = (d.ih > 0) ? (r.height / d.ih) : 1;
+    var x = r.left + d.x * kx;
+    var y = r.top + d.y * ky;
+
+    // 中间帧（非顶层）：只向上转发，由顶层帧统一裁决 —— 支持嵌套 iframe 链
+    // （如广告套餐：广告帧里还套着广告帧）。回执沿链向下逐级传回源帧。
+    if (window !== window.top) {
+      if (d.phase === 'down') {
+        fwd = { pid: d.pid, childWin: ev.source, at: Date.now() };
+      } else if (!fwd || d.pid !== fwd.pid) {
+        return;
+      }
+      try {
+        window.parent.postMessage({ tvg: 'relay', phase: d.phase, pid: d.pid,
+          x: x, y: y, iw: innerWidth, ih: innerHeight }, '*');
+      } catch (e3) {}
+      if (d.phase === 'up') fwd = null;
+      return;
+    }
+
+    if (d.phase === 'down') {
+      if (remote) {
+        if (seq && seq.remote) return;     // 同一路进行中 → 忽略重复
+        remote = null;                     // 陈旧残留 → 清理后重新接收
+      }
+      if (!hitVideo(x, y)) return;         // 落点不在视频上 → 不接管（纯站点交互）
+      var pid = 7000 + (d.pid % 1000);
+      remote = { pid: pid, clientPid: d.pid, frame: fr, source: ev.source };
+      onPointerDown(fakeEv(x, y, pid));
+      if (seq) seq.remote = true;          // 远程序列：不向站点派发合成 cancel
+    } else if (d.phase === 'move') {
+      if (!remote || d.pid !== remote.clientPid) return;
+      if (!remote.frame.isConnected) { remote = null; return; }
+      onPointerMove(fakeEv(x, y, remote.pid));
+    } else if (d.phase === 'up') {
+      if (!remote || d.pid !== remote.clientPid) return;
+      remoteAck();                         // 极端时序兜底（通常成立时已回执）
+      var fe2 = fakeEv(x, y, remote.pid);
+      remote = null;
+      onPointerUp(fe2);
+      return;
+    }
+    remoteAck();                           // 本消息处理中若手势成立 → 立即回执
+  }
+
   // ===== 序列 =====
 
   function startSequence(e, v) {
@@ -199,6 +339,7 @@ TVG.Gestures = (function () {
         var rate = c.longPressRate || 4;
         seq.mode = 'longpress';
         seq.engaged = true;
+        remoteAck();             // 跨帧序列：成立即回执子帧（无后续 move 可依赖）
         setRate(seq.video, rate);
         notifySiteCancel(seq);   // 向网站派发 cancel：中止它自己可能正在进行的手势/长按
         TVG.Toast.show(rate + 'x 倍速', true, 0, seq.rect, seq.cont);
@@ -208,6 +349,11 @@ TVG.Gestures = (function () {
 
   function onPointerDown(e) {
     if (!isActive()) return;
+    // 子帧 + 触摸 → 一律转发给父帧（不看本帧有无视频：广告帧常带装饰性视频，
+    // 但它不是用户的主目标；主页面的视频才该响应）。本地处理随后照常继续。
+    if (e.pointerType === 'touch' && window !== window.top) {
+      relayDown(e);
+    }
     var c = cfg();
     if (e.pointerType === 'mouse' && !c.mouseSupport) return;
     if (isUiTarget(e.target)) return;
@@ -329,6 +475,7 @@ TVG.Gestures = (function () {
   }
 
   function onPointerMove(e) {
+    if (relay && e.pointerId === relay.pid) relayMove(e);   // 转发不阻断本地处理
     if (!isActive()) return;
     if (!seq) return;
     var p = seq.pointers.get(e.pointerId);
@@ -378,6 +525,7 @@ TVG.Gestures = (function () {
 
   function onPointerUp(e) {
     if (e && e.__tvgSynthetic) return;   // 忽略我们派发的合成 cancel（否则会误清自己的序列）
+    if (relay && e.pointerId === relay.pid) relayUp(e);   // 转发不阻断本地处理
     if (!isActive()) return;
     if (!seq) return;
     if (!seq.pointers.has(e.pointerId)) return;
@@ -716,6 +864,12 @@ TVG.Gestures = (function () {
     window.addEventListener('touchcancel', onTouchCount, { capture: true, passive: true });
     window.addEventListener('contextmenu', onContext, true);
     window.addEventListener('dblclick', onDblClick, true);
+    // 跨帧手势转发（v1.1.6）：子帧→父帧的触摸序列 / 父帧→子帧的手势回执
+    window.addEventListener('message', function (event) {
+      if (!event || !event.data) return;
+      if (event.data.tvg === 'relay') onRelayMessage(event);
+      else if (event.data.tvg === 'relay-ack') onRelayAck(event);
+    }, false);
     // 预置带轻点的"原生 click 抑制"（配合 forwardBandTap 补发正确目标的点击）
     window.addEventListener('click', TVG.Bridge.onClickCapture, true);
     // 双击尾巴：被消费双击的第二击 click（防网站"两次点击"计数式双击识别）
