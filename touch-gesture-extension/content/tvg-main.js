@@ -22,8 +22,6 @@
     });
     var active = !!cfg.enabled && !disabled;
     TVG.Gestures.setActive(active);
-    // 覆盖层穿透随激活状态同步：停用/禁用域名时立刻把 pointer-events 还回去
-    try { TVG.Overlay.refresh(); } catch (e) {}
     return active;
   }
 
@@ -57,8 +55,6 @@
       }
       // 全屏状态可能随视口变化（伪全屏），每次扫描同步一次类名
       try { TVG.Zone.updateFsClass(); } catch (e) {}
-      // 浮层广告会轮播/反复注入 → 每次扫描顺带重判（含新插入的 iframe）
-      try { TVG.Overlay.refresh(); } catch (e) {}
     }
     function scheduleScan() {
       clearTimeout(scanTimer);
