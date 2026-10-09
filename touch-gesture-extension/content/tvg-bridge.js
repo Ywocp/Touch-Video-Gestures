@@ -21,6 +21,7 @@ TVG.Bridge = (function () {
   // "长按触发网站自有手势"的第二条路径（第一条是 stopSite 切断事件流）。
   // 合成事件带 __tvgSynthetic 标记，我们自己的监听器据此忽略它（否则会误清序列）。
   function notifySiteCancel(s) {
+    if (s && s.remote) return;   // 跨帧转发的序列：站点从未见过这些触摸，无需通知
     var t = s && s.target;
     if (!t || typeof t.dispatchEvent !== 'function') return;
     try {
