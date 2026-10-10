@@ -88,32 +88,50 @@ TVG.Gestures = (function () {
     // 面积超过视口 12%，或 宽>70%视口 且 高>25%视口 → 是大面积覆盖层，不是控件
     if (r.width * r.height > 0.12 * vw * vh) return false;
     if (r.width > 0.7 * vw && r.height > 0.25 * vh) return false;
-    // 视频正中央的「大播放按钮」不算控件 —— 见 isCenterPlayButton
-    if (isCenterPlayButton(ui, r)) return false;
+    // 视频正中央的「大播放按钮」不算控件 —— 见 isCenterTapTarget
+    if (isCenterTapTarget(ui, r)) return false;
     return true;
   }
 
-  // 「中央大播放按钮」排除表（v1.1.9，声明式：加播放器 = 加一行）
-  // Plyr 的 .plyr__control--overlaid、video.js 的 .vjs-big-play-button 这类按钮
-  // 名字里带 control / play，尺寸却只有几十像素（48×48 量级），恰好挂在视频的
+  // ===== 视频正中央的「大播放按钮」不算控件（v1.1.9 引入 / v1.1.10 改为按位置判定）=====
+  // 背景：Plyr 的 .plyr__control--overlaid、video.js 的 .vjs-big-play-button 这类
+  // 按钮名字里带 control / play，尺寸却只有几十像素（48×48 量级），恰好挂在视频的
   // 几何中心 —— 面积启发式判不出它是"覆盖层"，于是被当成控件放行，结果是
   // **视频正中心的长按 / 拖动 / 双击全部失效**（hanime1.me 实测：倍速完全没反应）。
-  // 它本质上是"视频的一部分"（点它 = 操作视频），必须接管。
-  // 接管 ≠ 抢点击：观察期内事件照常放行，点它照样能播放；只有手势成立才切断。
-  var CENTER_PLAY_UI = [
+  //
+  // v1.1.9 只认类名白名单，漏掉"换了个类名/换个标签"的中央按钮；v1.1.10 改为
+  // **按位置判定**：小控件只要落在视频矩形的中心区域，就当作中央播放按钮接管。
+  // 为什么敢这么放宽 —— 代价是不对称的：
+  //   · 漏判 = 视频中心手势全失效（代价高，用户直接感知为"扩展没用"）；
+  //   · 误判 = 只是多接管一个中心区域的小控件，而**观察期事件照常放行**，
+  //     点它照样能播放，只有手势成立才切断（代价极低）。
+  // 控制条永远在底部 / 顶部，不可能落在中心区域，因此不受影响。
+  var CENTER_PLAY_UI = [          // 保留：个别播放器的中央按钮并不严格居中
     '.plyr__control--overlaid',
     '.vjs-big-play-button',
     '[class*="big-play" i]',
     '[class*="bigplay" i]',
     '[class*="play-large" i]'
   ];
+  var CENTER_DX = 0.18;           // 中心区域半宽（占视频宽比例）
+  var CENTER_DY = 0.18;           // 中心区域半高（占视频高比例）
 
-  function isCenterPlayButton(ui, r) {
-    // 必须落在已接管的视频上：控制条上的同类按钮不在中心，不受影响
-    if (!hitVideo(r.left + r.width / 2, r.top + r.height / 2)) return false;
+  function isCenterTapTarget(ui, r) {
+    var cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+    var v = hitVideo(cx, cy);          // 必须落在已接管的视频上
+    if (!v) return false;
+    // 先看声明式白名单（不严格居中的情况）
     for (var i = 0; i < CENTER_PLAY_UI.length; i++) {
       try { if (ui.matches && ui.matches(CENTER_PLAY_UI[i])) return true; } catch (e) {}
     }
+    // 再看位置：落在视频矩形中心区域 → 视作中央播放按钮
+    try {
+      var vr = v.getBoundingClientRect();
+      if (vr.width <= 0 || vr.height <= 0) return false;
+      var dx = Math.abs(cx - (vr.left + vr.width / 2)) / vr.width;
+      var dy = Math.abs(cy - (vr.top + vr.height / 2)) / vr.height;
+      if (dx <= CENTER_DX && dy <= CENTER_DY) return true;
+    } catch (e2) {}
     return false;
   }
 
